@@ -648,8 +648,36 @@ function readEnderecoFields(payload) {
   return {
     cep: normalizeDigits(endereco.cep || payload?.cep),
     logradouro: String(endereco.logradouro || payload?.logradouro || "").trim(),
+    numero: String(endereco.numero || payload?.numero || "").trim(),
+    complemento: String(endereco.complemento || payload?.complemento || "").trim(),
     bairro: String(endereco.bairro || payload?.bairro || "").trim(),
-    cidade: String(endereco.cidade || payload?.cidade || "").trim()
+    cidade: String(endereco.cidade || payload?.cidade || "").trim(),
+    uf: String(endereco.uf || payload?.uf || "").trim().toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2)
+  };
+}
+
+function readPerfilFields(payload) {
+  const perfil = payload?.perfil && typeof payload.perfil === "object" ? payload.perfil : {};
+  const readSection = (key, fields) => {
+    const section = perfil?.[key] && typeof perfil[key] === "object" ? perfil[key] : {};
+    const output = {};
+    fields.forEach((field) => {
+      output[field] = String(section[field] || "").trim();
+    });
+    return output;
+  };
+
+  return {
+    pessoais: readSection("pessoais", ["nomePaciente", "dataNascimento", "cpfPaciente"]),
+    filiacao: readSection("filiacao", ["nomeMae", "nomePai", "nomeResponsavel", "vinculo", "telPrincipal", "telSecundario"]),
+    escolares: readSection("escolares", ["escolaNome", "coordenacao", "periodo", "serieTurma"]),
+    financeiros: readSection("financeiros", ["respFinanceiroNome", "respFinanceiroCpfCnpj", "respFinanceiroTelefone", "respFinanceiroEmail"]),
+    endereco: {
+      ...readSection("endereco", ["logradouro", "numero", "complemento", "bairro", "cidade"]),
+      cep: normalizeDigits(perfil?.endereco?.cep || ""),
+      uf: String(perfil?.endereco?.uf || "").trim().toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2)
+    },
+    pagamento: readSection("pagamento", ["formaPagamento", "diaVencimento"])
   };
 }
 
@@ -661,11 +689,12 @@ function normalizePatientPayload(payload) {
   const now = Date.now();
   const core = readCoreFields(payload);
   const endereco = readEnderecoFields(payload);
+  const perfil = readPerfilFields(payload);
   const sourceRaw = payload?.source && typeof payload.source === "object" ? payload.source : {};
 
   return {
     core,
-    nome: core.nome,
+    nome: core.nome || "Sem nome",
     cpf: core.cpf,
     telefone: core.telefone,
     telefoneDigits: core.telefoneDigits,
@@ -673,6 +702,7 @@ function normalizePatientPayload(payload) {
     email: core.email,
     ativo: core.ativo,
     endereco,
+    perfil,
     responsavelFinanceiro: String(payload?.responsavelFinanceiro || "").trim(),
     legacy: payload?.legacy && typeof payload.legacy === "object" ? { ...payload.legacy } : {},
     dadosOriginais: normalizeObjectValues(payload?.dadosOriginais),
@@ -822,10 +852,10 @@ export async function createPatient(patientId, payload) {
   }
 
   const normalized = normalizePatientPayload(payload);
-  if (!normalized || !normalized.core?.nome || !normalized.core?.telefone) {
+  if (!normalized) {
     return {
       ok: false,
-      message: "Nome e telefone são obrigatórios para cadastrar paciente."
+      message: "Dados inválidos para cadastrar paciente."
     };
   }
 
@@ -870,10 +900,10 @@ export async function updatePatient(patientId, patch) {
     };
 
     const normalized = normalizePatientPayload(merged);
-    if (!normalized || !normalized.core?.nome || !normalized.core?.telefone) {
+    if (!normalized) {
       return {
         ok: false,
-        message: "Nome e telefone são obrigatórios para salvar paciente."
+        message: "Dados inválidos para salvar paciente."
       };
     }
 

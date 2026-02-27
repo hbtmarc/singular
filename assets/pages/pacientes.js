@@ -25,9 +25,14 @@ function normalizeHeaderKey(value) {
 }
 
 function normalizeDateForStorage(value) {
+  const normalized = normalizeDate(value);
+  return normalized || null;
+}
+
+function normalizeDate(value) {
   const raw = String(value || "").trim();
   if (!raw) {
-    return null;
+    return "";
   }
 
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
@@ -36,7 +41,7 @@ function normalizeDateForStorage(value) {
 
   const br = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
   if (!br) {
-    return null;
+    return "";
   }
 
   return `${br[3]}-${br[2]}-${br[1]}`;
@@ -91,25 +96,218 @@ function getPatientCore(patient) {
   }
 
   const core = patient.core && typeof patient.core === "object" ? patient.core : patient;
+  const perfil = buildPerfilFromPatient(patient);
+  const pessoais = perfil.pessoais;
+  const financeiros = perfil.financeiros;
+  const filiacao = perfil.filiacao;
+  const primaryPhone = onlyDigits(filiacao.telPrincipal || "");
 
   return {
-    nome: String(core.nome || patient.nome || "").trim(),
-    cpf: onlyDigits(core.cpf || patient.cpf),
-    telefone: String(core.telefone || patient.telefone || "").trim(),
-    telefoneDigits: onlyDigits(core.telefoneDigits || patient.telefoneDigits || core.telefone || patient.telefone),
-    dataNascimento: normalizeDateForStorage(core.dataNascimento || patient.dataNascimento),
-    email: String(core.email || patient.email || "").trim().toLowerCase(),
+    nome: String(core.nome || patient.nome || pessoais.nomePaciente || "").trim(),
+    cpf: onlyDigits(core.cpf || patient.cpf || pessoais.cpfPaciente),
+    telefone: String(core.telefone || patient.telefone || filiacao.telPrincipal || "").trim(),
+    telefoneDigits: onlyDigits(core.telefoneDigits || patient.telefoneDigits || primaryPhone || core.telefone || patient.telefone),
+    dataNascimento: normalizeDateForStorage(core.dataNascimento || patient.dataNascimento || pessoais.dataNascimento),
+    email: String(core.email || patient.email || financeiros.respFinanceiroEmail || "").trim().toLowerCase(),
     ativo: core.ativo !== false && patient.ativo !== false
   };
 }
 
 function getPatientEndereco(patient) {
-  const endereco = patient?.endereco && typeof patient.endereco === "object" ? patient.endereco : {};
+  const perfil = buildPerfilFromPatient(patient);
+  const endereco = perfil.endereco;
   return {
     cep: onlyDigits(endereco.cep || ""),
     logradouro: String(endereco.logradouro || "").trim(),
+    numero: String(endereco.numero || "").trim(),
+    complemento: String(endereco.complemento || "").trim(),
     bairro: String(endereco.bairro || "").trim(),
-    cidade: String(endereco.cidade || "").trim()
+    cidade: String(endereco.cidade || "").trim(),
+    uf: String(endereco.uf || "").trim().toUpperCase().slice(0, 2)
+  };
+}
+
+function readPerfilSection(perfil, key, fields) {
+  const section = perfil?.[key] && typeof perfil[key] === "object" ? perfil[key] : {};
+  const result = {};
+  fields.forEach((field) => {
+    result[field] = String(section[field] || "").trim();
+  });
+  return result;
+}
+
+function buildPerfilFromPatient(patient) {
+  const perfilRaw = patient?.perfil && typeof patient.perfil === "object" ? patient.perfil : {};
+  const enderecoRoot = patient?.endereco && typeof patient.endereco === "object" ? patient.endereco : {};
+
+  const pessoais = readPerfilSection(perfilRaw, "pessoais", ["nomePaciente", "dataNascimento", "cpfPaciente"]);
+  if (!pessoais.nomePaciente) {
+    pessoais.nomePaciente = String(patient?.nome || patient?.core?.nome || "").trim();
+  }
+  if (!pessoais.dataNascimento) {
+    pessoais.dataNascimento = normalizeDate(patient?.dataNascimento || patient?.core?.dataNascimento || "");
+  }
+  if (!pessoais.cpfPaciente) {
+    pessoais.cpfPaciente = onlyDigits(patient?.cpf || patient?.core?.cpf || "");
+  }
+
+  const filiacao = readPerfilSection(perfilRaw, "filiacao", [
+    "nomeMae",
+    "nomePai",
+    "nomeResponsavel",
+    "vinculo",
+    "telPrincipal",
+    "telSecundario"
+  ]);
+  if (!filiacao.telPrincipal) {
+    filiacao.telPrincipal = String(patient?.telefone || patient?.core?.telefone || "").trim();
+  }
+
+  const escolares = readPerfilSection(perfilRaw, "escolares", ["escolaNome", "coordenacao", "periodo", "serieTurma"]);
+
+  const financeiros = readPerfilSection(perfilRaw, "financeiros", [
+    "respFinanceiroNome",
+    "respFinanceiroCpfCnpj",
+    "respFinanceiroTelefone",
+    "respFinanceiroEmail"
+  ]);
+  if (!financeiros.respFinanceiroNome) {
+    financeiros.respFinanceiroNome = String(patient?.responsavelFinanceiro || "").trim();
+  }
+  if (!financeiros.respFinanceiroEmail) {
+    financeiros.respFinanceiroEmail = String(patient?.email || patient?.core?.email || "").trim().toLowerCase();
+  }
+
+  const endereco = readPerfilSection(perfilRaw, "endereco", [
+    "logradouro",
+    "numero",
+    "complemento",
+    "cep",
+    "bairro",
+    "cidade",
+    "uf"
+  ]);
+  if (!endereco.logradouro) {
+    endereco.logradouro = String(enderecoRoot.logradouro || patient?.logradouro || "").trim();
+  }
+  if (!endereco.numero) {
+    endereco.numero = String(enderecoRoot.numero || patient?.numero || "").trim();
+  }
+  if (!endereco.complemento) {
+    endereco.complemento = String(enderecoRoot.complemento || patient?.complemento || "").trim();
+  }
+  if (!endereco.cep) {
+    endereco.cep = onlyDigits(enderecoRoot.cep || patient?.cep || "");
+  }
+  if (!endereco.bairro) {
+    endereco.bairro = String(enderecoRoot.bairro || patient?.bairro || "").trim();
+  }
+  if (!endereco.cidade) {
+    endereco.cidade = String(enderecoRoot.cidade || patient?.cidade || "").trim();
+  }
+  if (!endereco.uf) {
+    endereco.uf = String(enderecoRoot.uf || patient?.uf || "").trim().toUpperCase().slice(0, 2);
+  }
+
+  const pagamento = readPerfilSection(perfilRaw, "pagamento", ["formaPagamento", "diaVencimento"]);
+
+  return {
+    pessoais,
+    filiacao,
+    escolares,
+    financeiros,
+    endereco,
+    pagamento
+  };
+}
+
+function buildPatientPatchFromPerfil(perfilInput, currentPatient = {}) {
+  const perfil = buildPerfilFromPatient({ perfil: perfilInput });
+
+  const pessoais = {
+    nomePaciente: normalizeName(perfil.pessoais.nomePaciente),
+    dataNascimento: normalizeDate(perfil.pessoais.dataNascimento),
+    cpfPaciente: onlyDigits(perfil.pessoais.cpfPaciente)
+  };
+
+  const filiacao = {
+    nomeMae: String(perfil.filiacao.nomeMae || "").trim(),
+    nomePai: String(perfil.filiacao.nomePai || "").trim(),
+    nomeResponsavel: String(perfil.filiacao.nomeResponsavel || "").trim(),
+    vinculo: String(perfil.filiacao.vinculo || "").trim(),
+    telPrincipal: String(perfil.filiacao.telPrincipal || "").trim(),
+    telSecundario: String(perfil.filiacao.telSecundario || "").trim()
+  };
+
+  const escolares = {
+    escolaNome: String(perfil.escolares.escolaNome || "").trim(),
+    coordenacao: String(perfil.escolares.coordenacao || "").trim(),
+    periodo: String(perfil.escolares.periodo || "").trim(),
+    serieTurma: String(perfil.escolares.serieTurma || "").trim()
+  };
+
+  const financeiros = {
+    respFinanceiroNome: String(perfil.financeiros.respFinanceiroNome || "").trim(),
+    respFinanceiroCpfCnpj: onlyDigits(perfil.financeiros.respFinanceiroCpfCnpj),
+    respFinanceiroTelefone: String(perfil.financeiros.respFinanceiroTelefone || "").trim(),
+    respFinanceiroEmail: String(perfil.financeiros.respFinanceiroEmail || "").trim().toLowerCase()
+  };
+
+  const endereco = {
+    logradouro: String(perfil.endereco.logradouro || "").trim(),
+    numero: String(perfil.endereco.numero || "").trim(),
+    complemento: String(perfil.endereco.complemento || "").trim(),
+    cep: onlyDigits(perfil.endereco.cep),
+    bairro: String(perfil.endereco.bairro || "").trim(),
+    cidade: String(perfil.endereco.cidade || "").trim(),
+    uf: String(perfil.endereco.uf || "").trim().toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2)
+  };
+
+  const pagamento = {
+    formaPagamento: String(perfil.pagamento.formaPagamento || "").trim(),
+    diaVencimento: String(perfil.pagamento.diaVencimento || "").trim().replace(/[^0-9]/g, "").slice(0, 2)
+  };
+
+  const telPrincipalDigits = onlyDigits(filiacao.telPrincipal);
+  const birthDate = pessoais.dataNascimento || null;
+  const now = Date.now();
+
+  return {
+    core: {
+      nome: pessoais.nomePaciente || "Sem nome",
+      cpf: pessoais.cpfPaciente,
+      telefone: filiacao.telPrincipal,
+      telefoneDigits: telPrincipalDigits,
+      dataNascimento: birthDate,
+      email: financeiros.respFinanceiroEmail,
+      ativo: currentPatient?.ativo !== false
+    },
+    nome: pessoais.nomePaciente || "Sem nome",
+    cpf: pessoais.cpfPaciente,
+    telefoneDigits: telPrincipalDigits,
+    dataNascimento: birthDate,
+    ativo: currentPatient?.ativo !== false,
+    perfil: {
+      pessoais,
+      filiacao,
+      escolares,
+      financeiros,
+      endereco,
+      pagamento
+    },
+    endereco: {
+      cep: endereco.cep,
+      logradouro: endereco.logradouro,
+      numero: endereco.numero,
+      complemento: endereco.complemento,
+      bairro: endereco.bairro,
+      cidade: endereco.cidade,
+      uf: endereco.uf
+    },
+    responsavelFinanceiro: financeiros.respFinanceiroNome,
+    email: financeiros.respFinanceiroEmail,
+    updatedAt: now,
+    createdAt: Number.isFinite(Number(currentPatient?.createdAt)) ? Number(currentPatient.createdAt) : now
   };
 }
 
@@ -458,85 +656,132 @@ export function render(container) {
         <h2 id="pac-edit-title">Novo paciente</h2>
 
         <div class="admin-card-body admin-modal-body">
-          <label class="admin-label" for="pac-nome">Nome *</label>
-          <input id="pac-nome" class="admin-input" type="text" placeholder="Nome completo" />
+          <p class="form-required-note">Campos com <span class="required-asterisk">*</span> são obrigatórios.</p>
 
-          <label class="admin-label" for="pac-telefone">Telefone *</label>
-          <input id="pac-telefone" class="admin-input" type="text" placeholder="(00) 00000-0000" />
+          <section class="patient-form-section">
+            <h3>Dados Pessoais Paciente</h3>
+            <div class="patient-form-grid">
+              <label class="admin-label required-label" for="pac-nome-paciente">Nome do Paciente</label>
+              <input id="pac-nome-paciente" class="admin-input" type="text" />
 
-          <label class="admin-label" for="pac-cpf">CPF/CNPJ</label>
-          <input id="pac-cpf" class="admin-input" type="text" placeholder="000.000.000-00 ou 00.000.000/0000-00" />
+              <label class="admin-label required-label" for="pac-data-nascimento">Data de Nascimento</label>
+              <input id="pac-data-nascimento" class="admin-input" type="text" placeholder="DD/MM/AAAA ou AAAA-MM-DD" />
 
-          <label class="admin-label" for="pac-data">Data de nascimento</label>
-          <input id="pac-data" class="admin-input" type="date" />
-
-          <label class="admin-label" for="pac-email">E-mail</label>
-          <input id="pac-email" class="admin-input" type="email" placeholder="paciente@email.com" />
-
-          <label class="admin-label" for="pac-resp">Responsável financeiro</label>
-          <input id="pac-resp" class="admin-input" type="text" placeholder="Nome do responsável" />
-
-          <label class="admin-label" for="pac-cep">CEP</label>
-          <input id="pac-cep" class="admin-input" type="text" placeholder="00000-000" />
-
-          <label class="admin-label" for="pac-end">Endereço</label>
-          <input id="pac-end" class="admin-input" type="text" placeholder="Rua, número" />
-
-          <label class="admin-label" for="pac-bairro">Bairro</label>
-          <input id="pac-bairro" class="admin-input" type="text" placeholder="Bairro" />
-
-          <label class="admin-label" for="pac-cidade">Cidade</label>
-          <input id="pac-cidade" class="admin-input" type="text" placeholder="Cidade" />
-
-          <div class="agenda-edit-wrap">
-            <p class="admin-label agenda-edit-title">Agenda (plano terapêutico)</p>
-            <div class="agenda-edit-grid">
-              <div class="agenda-edit-row">
-                <input id="pac-agenda-terapia-1" class="admin-input" type="text" placeholder="Terapia (slot 1)" />
-                <select id="pac-agenda-dia-1" class="admin-input">
-                  <option value="">Dia</option>
-                  <option value="segunda">Segunda-feira</option>
-                  <option value="terca">Terça-feira</option>
-                  <option value="quarta">Quarta-feira</option>
-                  <option value="quinta">Quinta-feira</option>
-                  <option value="sexta">Sexta-feira</option>
-                  <option value="sabado">Sábado</option>
-                  <option value="domingo">Domingo</option>
-                </select>
-                <input id="pac-agenda-prof-1" class="admin-input" type="text" placeholder="Profissional (slot 1)" />
-              </div>
-
-              <div class="agenda-edit-row">
-                <input id="pac-agenda-terapia-2" class="admin-input" type="text" placeholder="Terapia (slot 2)" />
-                <select id="pac-agenda-dia-2" class="admin-input">
-                  <option value="">Dia</option>
-                  <option value="segunda">Segunda-feira</option>
-                  <option value="terca">Terça-feira</option>
-                  <option value="quarta">Quarta-feira</option>
-                  <option value="quinta">Quinta-feira</option>
-                  <option value="sexta">Sexta-feira</option>
-                  <option value="sabado">Sábado</option>
-                  <option value="domingo">Domingo</option>
-                </select>
-                <input id="pac-agenda-prof-2" class="admin-input" type="text" placeholder="Profissional (slot 2)" />
-              </div>
-
-              <div class="agenda-edit-row">
-                <input id="pac-agenda-terapia-3" class="admin-input" type="text" placeholder="Terapia (slot 3)" />
-                <select id="pac-agenda-dia-3" class="admin-input">
-                  <option value="">Dia</option>
-                  <option value="segunda">Segunda-feira</option>
-                  <option value="terca">Terça-feira</option>
-                  <option value="quarta">Quarta-feira</option>
-                  <option value="quinta">Quinta-feira</option>
-                  <option value="sexta">Sexta-feira</option>
-                  <option value="sabado">Sábado</option>
-                  <option value="domingo">Domingo</option>
-                </select>
-                <input id="pac-agenda-prof-3" class="admin-input" type="text" placeholder="Profissional (slot 3)" />
-              </div>
+              <label class="admin-label" for="pac-cpf-paciente">CPF do Paciente</label>
+              <input id="pac-cpf-paciente" class="admin-input" type="text" />
             </div>
-          </div>
+          </section>
+
+          <section class="patient-form-section">
+            <h3>Filiação e Responsável</h3>
+            <div class="patient-form-grid">
+              <label class="admin-label required-label" for="pac-nome-mae">Nome da Mãe</label>
+              <input id="pac-nome-mae" class="admin-input" type="text" />
+
+              <label class="admin-label" for="pac-nome-pai">Nome do Pai</label>
+              <input id="pac-nome-pai" class="admin-input" type="text" />
+
+              <label class="admin-label required-label" for="pac-nome-responsavel">Nome Responsável (Para contato)</label>
+              <input id="pac-nome-responsavel" class="admin-input" type="text" />
+
+              <label class="admin-label required-label" for="pac-vinculo">Vínculo</label>
+              <select id="pac-vinculo" class="admin-input">
+                <option value="">Selecione</option>
+                <option value="Pai">Pai</option>
+                <option value="Mãe">Mãe</option>
+                <option value="Outro">Outro</option>
+              </select>
+
+              <label class="admin-label required-label" for="pac-tel-principal">Telefone / WhatsApp (Principal)</label>
+              <input id="pac-tel-principal" class="admin-input" type="text" />
+
+              <label class="admin-label required-label" for="pac-tel-secundario">Telefone / WhatsApp (Secundário)</label>
+              <input id="pac-tel-secundario" class="admin-input" type="text" />
+            </div>
+          </section>
+
+          <section class="patient-form-section">
+            <h3>Dados Escolares</h3>
+            <div class="patient-form-grid">
+              <label class="admin-label" for="pac-escola-nome">Nome da Escola</label>
+              <input id="pac-escola-nome" class="admin-input" type="text" />
+
+              <label class="admin-label" for="pac-coordenacao">Coordenação</label>
+              <input id="pac-coordenacao" class="admin-input" type="text" />
+
+              <label class="admin-label" for="pac-periodo">Período</label>
+              <select id="pac-periodo" class="admin-input">
+                <option value="">Selecione</option>
+                <option value="Manhã">Manhã</option>
+                <option value="Tarde">Tarde</option>
+                <option value="Integral">Integral</option>
+              </select>
+
+              <label class="admin-label" for="pac-serie-turma">Série / Turma</label>
+              <input id="pac-serie-turma" class="admin-input" type="text" />
+            </div>
+          </section>
+
+          <section class="patient-form-section">
+            <h3>Dados Financeiros</h3>
+            <div class="patient-form-grid">
+              <label class="admin-label required-label" for="pac-resp-financeiro">Responsável Financeiro</label>
+              <input id="pac-resp-financeiro" class="admin-input" type="text" />
+
+              <label class="admin-label required-label" for="pac-cpf-cnpj-resp-fin">CPF Resp. Fin.</label>
+              <input id="pac-cpf-cnpj-resp-fin" class="admin-input" type="text" />
+
+              <label class="admin-label required-label" for="pac-tel-resp-fin">Telefone / WhatsApp (Resp. Fin.)</label>
+              <input id="pac-tel-resp-fin" class="admin-input" type="text" />
+
+              <label class="admin-label required-label" for="pac-email-resp-fin">E-mail</label>
+              <input id="pac-email-resp-fin" class="admin-input" type="email" />
+            </div>
+          </section>
+
+          <section class="patient-form-section">
+            <h3>Endereço</h3>
+            <div class="patient-form-grid">
+              <label class="admin-label required-label" for="pac-logradouro">Logradouro</label>
+              <input id="pac-logradouro" class="admin-input" type="text" />
+
+              <label class="admin-label required-label" for="pac-numero">Número</label>
+              <input id="pac-numero" class="admin-input" type="text" />
+
+              <label class="admin-label" for="pac-complemento">Complemento</label>
+              <input id="pac-complemento" class="admin-input" type="text" />
+
+              <label class="admin-label required-label" for="pac-cep">CEP</label>
+              <input id="pac-cep" class="admin-input" type="text" />
+
+              <label class="admin-label required-label" for="pac-bairro">Bairro</label>
+              <input id="pac-bairro" class="admin-input" type="text" />
+
+              <label class="admin-label required-label" for="pac-cidade">Cidade</label>
+              <input id="pac-cidade" class="admin-input" type="text" />
+
+              <label class="admin-label required-label" for="pac-uf">UF (2-letter)</label>
+              <input id="pac-uf" class="admin-input" type="text" maxlength="2" />
+            </div>
+          </section>
+
+          <section class="patient-form-section">
+            <h3>Dados para Pagamento</h3>
+            <div class="patient-form-grid">
+              <label class="admin-label required-label" for="pac-forma-pagamento">Forma de Pagamento</label>
+              <select id="pac-forma-pagamento" class="admin-input">
+                <option value="">Selecione</option>
+                <option value="PIX">PIX</option>
+                <option value="Cartão">Cartão</option>
+                <option value="Dinheiro">Dinheiro</option>
+                <option value="Boleto">Boleto</option>
+                <option value="Outro">Outro</option>
+              </select>
+
+              <label class="admin-label required-label" for="pac-dia-vencimento">Dia Vencimento</label>
+              <input id="pac-dia-vencimento" class="admin-input" type="number" min="1" max="31" />
+            </div>
+          </section>
 
           <p id="pac-edit-feedback" class="admin-feedback"></p>
 
@@ -587,19 +832,32 @@ export function render(container) {
   const editTitle = container.querySelector("#pac-edit-title");
   const editFeedback = container.querySelector("#pac-edit-feedback");
 
-  const nomeInput = container.querySelector("#pac-nome");
-  const telefoneInput = container.querySelector("#pac-telefone");
-  const cpfInput = container.querySelector("#pac-cpf");
-  const dataInput = container.querySelector("#pac-data");
-  const emailInput = container.querySelector("#pac-email");
-  const responsavelInput = container.querySelector("#pac-resp");
+  const nomePacienteInput = container.querySelector("#pac-nome-paciente");
+  const dataNascimentoInput = container.querySelector("#pac-data-nascimento");
+  const cpfPacienteInput = container.querySelector("#pac-cpf-paciente");
+  const nomeMaeInput = container.querySelector("#pac-nome-mae");
+  const nomePaiInput = container.querySelector("#pac-nome-pai");
+  const nomeResponsavelInput = container.querySelector("#pac-nome-responsavel");
+  const vinculoInput = container.querySelector("#pac-vinculo");
+  const telPrincipalInput = container.querySelector("#pac-tel-principal");
+  const telSecundarioInput = container.querySelector("#pac-tel-secundario");
+  const escolaNomeInput = container.querySelector("#pac-escola-nome");
+  const coordenacaoInput = container.querySelector("#pac-coordenacao");
+  const periodoInput = container.querySelector("#pac-periodo");
+  const serieTurmaInput = container.querySelector("#pac-serie-turma");
+  const respFinanceiroInput = container.querySelector("#pac-resp-financeiro");
+  const respFinanceiroCpfCnpjInput = container.querySelector("#pac-cpf-cnpj-resp-fin");
+  const respFinanceiroTelefoneInput = container.querySelector("#pac-tel-resp-fin");
+  const respFinanceiroEmailInput = container.querySelector("#pac-email-resp-fin");
+  const logradouroInput = container.querySelector("#pac-logradouro");
+  const numeroInput = container.querySelector("#pac-numero");
+  const complementoInput = container.querySelector("#pac-complemento");
   const cepInput = container.querySelector("#pac-cep");
-  const enderecoInput = container.querySelector("#pac-end");
   const bairroInput = container.querySelector("#pac-bairro");
   const cidadeInput = container.querySelector("#pac-cidade");
-  const agendaTerapiaInputs = [1, 2, 3].map((index) => container.querySelector(`#pac-agenda-terapia-${index}`));
-  const agendaDiaInputs = [1, 2, 3].map((index) => container.querySelector(`#pac-agenda-dia-${index}`));
-  const agendaProfissionalInputs = [1, 2, 3].map((index) => container.querySelector(`#pac-agenda-prof-${index}`));
+  const ufInput = container.querySelector("#pac-uf");
+  const formaPagamentoInput = container.querySelector("#pac-forma-pagamento");
+  const diaVencimentoInput = container.querySelector("#pac-dia-vencimento");
 
   const fichaOverlay = container.querySelector("#pac-ficha-modal");
   const fichaClose = container.querySelector("#pac-ficha-close");
@@ -668,25 +926,32 @@ export function render(container) {
     editingPatientId = "";
     editTitle.textContent = "Novo paciente";
     editFeedback.textContent = "";
-    nomeInput.value = "";
-    telefoneInput.value = "";
-    cpfInput.value = "";
-    dataInput.value = "";
-    emailInput.value = "";
-    responsavelInput.value = "";
+    nomePacienteInput.value = "";
+    dataNascimentoInput.value = "";
+    cpfPacienteInput.value = "";
+    nomeMaeInput.value = "";
+    nomePaiInput.value = "";
+    nomeResponsavelInput.value = "";
+    vinculoInput.value = "";
+    telPrincipalInput.value = "";
+    telSecundarioInput.value = "";
+    escolaNomeInput.value = "";
+    coordenacaoInput.value = "";
+    periodoInput.value = "";
+    serieTurmaInput.value = "";
+    respFinanceiroInput.value = "";
+    respFinanceiroCpfCnpjInput.value = "";
+    respFinanceiroTelefoneInput.value = "";
+    respFinanceiroEmailInput.value = "";
+    logradouroInput.value = "";
+    numeroInput.value = "";
+    complementoInput.value = "";
     cepInput.value = "";
-    enderecoInput.value = "";
     bairroInput.value = "";
     cidadeInput.value = "";
-    agendaTerapiaInputs.forEach((input) => {
-      input.value = "";
-    });
-    agendaDiaInputs.forEach((input) => {
-      input.value = "";
-    });
-    agendaProfissionalInputs.forEach((input) => {
-      input.value = "";
-    });
+    ufInput.value = "";
+    formaPagamentoInput.value = "";
+    diaVencimentoInput.value = "";
   }
 
   function openEditModal(patientId = "") {
@@ -697,30 +962,43 @@ export function render(container) {
       editTitle.textContent = "Editar paciente";
 
       const patient = patientsMap[patientId];
-      const core = getPatientCore(patient);
-      const endereco = getPatientEndereco(patient);
+      const perfil = buildPerfilFromPatient(patient);
 
-      nomeInput.value = core.nome;
-      telefoneInput.value = core.telefone;
-      cpfInput.value = core.cpf;
-      dataInput.value = core.dataNascimento || "";
-      emailInput.value = core.email;
-      responsavelInput.value = String(patient?.responsavelFinanceiro || "").trim();
-      cepInput.value = endereco.cep;
-      enderecoInput.value = endereco.logradouro;
-      bairroInput.value = endereco.bairro;
-      cidadeInput.value = endereco.cidade;
+      nomePacienteInput.value = perfil.pessoais.nomePaciente || "";
+      dataNascimentoInput.value = perfil.pessoais.dataNascimento || "";
+      cpfPacienteInput.value = formatCpfCnpj(perfil.pessoais.cpfPaciente || "");
 
-      const agendaSlots = getAgendaSlotsForDisplay(patient, patient?.dadosOriginais || {});
-      agendaSlots.forEach((slot, index) => {
-        agendaTerapiaInputs[index].value = slot.terapia || "";
-        agendaDiaInputs[index].value = normalizeDiaSemana(slot.diaSemana) || "";
-        agendaProfissionalInputs[index].value = slot.profissional || "";
-      });
+      nomeMaeInput.value = perfil.filiacao.nomeMae || "";
+      nomePaiInput.value = perfil.filiacao.nomePai || "";
+      nomeResponsavelInput.value = perfil.filiacao.nomeResponsavel || "";
+      vinculoInput.value = perfil.filiacao.vinculo || "";
+      telPrincipalInput.value = formatPhoneBR(perfil.filiacao.telPrincipal || "");
+      telSecundarioInput.value = formatPhoneBR(perfil.filiacao.telSecundario || "");
+
+      escolaNomeInput.value = perfil.escolares.escolaNome || "";
+      coordenacaoInput.value = perfil.escolares.coordenacao || "";
+      periodoInput.value = perfil.escolares.periodo || "";
+      serieTurmaInput.value = perfil.escolares.serieTurma || "";
+
+      respFinanceiroInput.value = perfil.financeiros.respFinanceiroNome || "";
+      respFinanceiroCpfCnpjInput.value = formatCpfCnpj(perfil.financeiros.respFinanceiroCpfCnpj || "");
+      respFinanceiroTelefoneInput.value = formatPhoneBR(perfil.financeiros.respFinanceiroTelefone || "");
+      respFinanceiroEmailInput.value = perfil.financeiros.respFinanceiroEmail || "";
+
+      logradouroInput.value = perfil.endereco.logradouro || "";
+      numeroInput.value = perfil.endereco.numero || "";
+      complementoInput.value = perfil.endereco.complemento || "";
+      cepInput.value = formatCep(perfil.endereco.cep || "");
+      bairroInput.value = perfil.endereco.bairro || "";
+      cidadeInput.value = perfil.endereco.cidade || "";
+      ufInput.value = String(perfil.endereco.uf || "").toUpperCase().slice(0, 2);
+
+      formaPagamentoInput.value = perfil.pagamento.formaPagamento || "";
+      diaVencimentoInput.value = perfil.pagamento.diaVencimento || "";
     }
 
     openModal(editOverlay);
-    window.setTimeout(() => nomeInput.focus(), 0);
+    window.setTimeout(() => nomePacienteInput.focus(), 0);
   }
 
   function openFichaModal(patientId) {
@@ -730,11 +1008,34 @@ export function render(container) {
     }
 
     const core = getPatientCore(patient);
-    const endereco = getPatientEndereco(patient);
+    const perfil = buildPerfilFromPatient(patient);
     const source = patient?.source && typeof patient.source === "object" ? patient.source : {};
     const dadosOriginais = patient?.dadosOriginais && typeof patient.dadosOriginais === "object"
       ? patient.dadosOriginais
       : {};
+
+    const display = (value, formatter = null) => {
+      const raw = String(value ?? "").trim();
+      if (!raw) {
+        return "Não informado";
+      }
+      const formatted = typeof formatter === "function" ? formatter(raw) : raw;
+      return String(formatted || raw).trim() || "Não informado";
+    };
+
+    const fieldRow = (label, value) => `
+      <div class="ficha-field-label">${label}</div>
+      <div class="ficha-field-value">${value}</div>
+    `;
+
+    const sectionCard = (title, rowsHtml) => `
+      <section class="ficha-section ficha-section-card">
+        <h3>${title}</h3>
+        <div class="ficha-fields-grid">
+          ${rowsHtml}
+        </div>
+      </section>
+    `;
 
     const originalRows = isAdmin
       ? Object.keys(dadosOriginais)
@@ -767,9 +1068,67 @@ export function render(container) {
       `
       : "";
 
-    const telefoneFormatado = formatPhoneBR(core.telefoneDigits || core.telefone) || "-";
-    const cpfCnpjFormatado = formatCpfCnpj(core.cpf) || "-";
-    const cepFormatado = formatCep(endereco.cep) || "-";
+    const dadosPessoaisHtml = sectionCard(
+      "Dados Pessoais Paciente",
+      [
+        fieldRow("Nome do Paciente", display(perfil.pessoais.nomePaciente)),
+        fieldRow("Data de Nascimento", display(perfil.pessoais.dataNascimento, formatDateBR)),
+        fieldRow("CPF do Paciente", display(perfil.pessoais.cpfPaciente, formatCpfCnpj))
+      ].join("")
+    );
+
+    const filiacaoHtml = sectionCard(
+      "Filiação e Responsável",
+      [
+        fieldRow("Nome da Mãe", display(perfil.filiacao.nomeMae)),
+        fieldRow("Nome do Pai", display(perfil.filiacao.nomePai)),
+        fieldRow("Nome Responsável (Para contato)", display(perfil.filiacao.nomeResponsavel)),
+        fieldRow("Vínculo", display(perfil.filiacao.vinculo)),
+        fieldRow("Telefone / WhatsApp (Principal)", display(perfil.filiacao.telPrincipal, formatPhoneBR)),
+        fieldRow("Telefone / WhatsApp (Secundário)", display(perfil.filiacao.telSecundario, formatPhoneBR))
+      ].join("")
+    );
+
+    const escolaresHtml = sectionCard(
+      "Dados Escolares",
+      [
+        fieldRow("Nome da Escola", display(perfil.escolares.escolaNome)),
+        fieldRow("Coordenação", display(perfil.escolares.coordenacao)),
+        fieldRow("Período", display(perfil.escolares.periodo)),
+        fieldRow("Série / Turma", display(perfil.escolares.serieTurma))
+      ].join("")
+    );
+
+    const financeirosHtml = sectionCard(
+      "Dados Financeiros",
+      [
+        fieldRow("Responsável Financeiro", display(perfil.financeiros.respFinanceiroNome)),
+        fieldRow("CPF Resp. Fin.", display(perfil.financeiros.respFinanceiroCpfCnpj, formatCpfCnpj)),
+        fieldRow("Telefone / WhatsApp (Resp. Fin.)", display(perfil.financeiros.respFinanceiroTelefone, formatPhoneBR)),
+        fieldRow("E-mail", display(perfil.financeiros.respFinanceiroEmail))
+      ].join("")
+    );
+
+    const enderecoHtml = sectionCard(
+      "Endereço",
+      [
+        fieldRow("Logradouro", display(perfil.endereco.logradouro)),
+        fieldRow("Número", display(perfil.endereco.numero)),
+        fieldRow("Complemento", display(perfil.endereco.complemento)),
+        fieldRow("CEP", display(perfil.endereco.cep, formatCep)),
+        fieldRow("Bairro", display(perfil.endereco.bairro)),
+        fieldRow("Cidade", display(perfil.endereco.cidade)),
+        fieldRow("UF", display(perfil.endereco.uf))
+      ].join("")
+    );
+
+    const pagamentoHtml = sectionCard(
+      "Dados para Pagamento",
+      [
+        fieldRow("Forma de Pagamento", display(perfil.pagamento.formaPagamento)),
+        fieldRow("Dia Vencimento", display(perfil.pagamento.diaVencimento))
+      ].join("")
+    );
 
     const sourceSection = isAdmin
       ? `
@@ -826,28 +1185,12 @@ export function render(container) {
     `;
 
     fichaBody.innerHTML = `
-      <section class="ficha-section">
-        <h3>Dados principais</h3>
-        <p><strong>Nome:</strong> ${core.nome || "-"}</p>
-        <p><strong>CPF/CNPJ:</strong> ${cpfCnpjFormatado}</p>
-        <p><strong>Telefone:</strong> ${telefoneFormatado}</p>
-        <p><strong>Nascimento:</strong> ${formatDateBR(core.dataNascimento)}</p>
-        <p><strong>E-mail:</strong> ${core.email || "-"}</p>
-        <p><strong>Ativo:</strong> ${core.ativo ? "Sim" : "Não"}</p>
-      </section>
-
-      <section class="ficha-section">
-        <h3>Endereço</h3>
-        <p><strong>CEP:</strong> ${cepFormatado}</p>
-        <p><strong>Logradouro:</strong> ${endereco.logradouro || "-"}</p>
-        <p><strong>Bairro:</strong> ${endereco.bairro || "-"}</p>
-        <p><strong>Cidade:</strong> ${endereco.cidade || "-"}</p>
-      </section>
-
-      <section class="ficha-section">
-        <h3>Responsável financeiro</h3>
-        <p>${String(patient?.responsavelFinanceiro || "").trim() || "Não informado"}</p>
-      </section>
+      ${dadosPessoaisHtml}
+      ${filiacaoHtml}
+      ${escolaresHtml}
+      ${financeirosHtml}
+      ${enderecoHtml}
+      ${pagamentoHtml}
 
       ${agendaSection}
 
@@ -947,57 +1290,64 @@ export function render(container) {
   }
 
   async function savePatient() {
-    const nome = normalizeName(nomeInput.value);
-    const telefoneRaw = String(telefoneInput.value || "").trim();
-    const telefoneDigits = onlyDigits(telefoneRaw);
+    const current = editingPatientId ? patientsMap[editingPatientId] || {} : {};
 
-    if (!nome || !telefoneRaw) {
-      setFeedback(editFeedback, "Nome e telefone são obrigatórios.", "error");
-      return;
-    }
-
-    const payload = {
-      core: {
-        nome,
-        cpf: onlyDigits(cpfInput.value),
-        telefone: telefoneRaw,
-        telefoneDigits,
-        dataNascimento: normalizeDateForStorage(dataInput.value),
-        email: String(emailInput.value || "").trim().toLowerCase(),
-        ativo: true
+    const perfilInput = {
+      pessoais: {
+        nomePaciente: nomePacienteInput.value,
+        dataNascimento: dataNascimentoInput.value,
+        cpfPaciente: cpfPacienteInput.value
+      },
+      filiacao: {
+        nomeMae: nomeMaeInput.value,
+        nomePai: nomePaiInput.value,
+        nomeResponsavel: nomeResponsavelInput.value,
+        vinculo: vinculoInput.value,
+        telPrincipal: telPrincipalInput.value,
+        telSecundario: telSecundarioInput.value
+      },
+      escolares: {
+        escolaNome: escolaNomeInput.value,
+        coordenacao: coordenacaoInput.value,
+        periodo: periodoInput.value,
+        serieTurma: serieTurmaInput.value
+      },
+      financeiros: {
+        respFinanceiroNome: respFinanceiroInput.value,
+        respFinanceiroCpfCnpj: respFinanceiroCpfCnpjInput.value,
+        respFinanceiroTelefone: respFinanceiroTelefoneInput.value,
+        respFinanceiroEmail: respFinanceiroEmailInput.value
       },
       endereco: {
-        cep: onlyDigits(cepInput.value),
-        logradouro: String(enderecoInput.value || "").trim(),
-        bairro: String(bairroInput.value || "").trim(),
-        cidade: String(cidadeInput.value || "").trim()
+        logradouro: logradouroInput.value,
+        numero: numeroInput.value,
+        complemento: complementoInput.value,
+        cep: cepInput.value,
+        bairro: bairroInput.value,
+        cidade: cidadeInput.value,
+        uf: ufInput.value
       },
-      responsavelFinanceiro: String(responsavelInput.value || "").trim(),
-      planoTerapias: (() => {
-        const plano = {};
-        [1, 2, 3].forEach((slotIndex, index) => {
-          const terapia = String(agendaTerapiaInputs[index].value || "").trim();
-          const diaSemana = normalizeDiaSemana(agendaDiaInputs[index].value || "");
-          const profissional = String(agendaProfissionalInputs[index].value || "").trim();
+      pagamento: {
+        formaPagamento: formaPagamentoInput.value,
+        diaVencimento: diaVencimentoInput.value
+      }
+    };
 
-          if (terapia || diaSemana || profissional) {
-            plano[String(slotIndex)] = {
-              terapia,
-              diaSemana,
-              profissional
-            };
-          }
-        });
-        return plano;
-      })()
+    const patch = buildPatientPatchFromPerfil(perfilInput, current);
+    const payload = {
+      ...current,
+      ...patch,
+      planoTerapias: current?.planoTerapias && typeof current.planoTerapias === "object" ? current.planoTerapias : {},
+      dadosOriginais: current?.dadosOriginais && typeof current.dadosOriginais === "object" ? current.dadosOriginais : {},
+      alertas: Array.isArray(current?.alertas) ? current.alertas : [],
+      source: current?.source && typeof current.source === "object" ? current.source : {},
+      legacy: current?.legacy && typeof current.legacy === "object" ? current.legacy : {}
     };
 
     if (editingPatientId) {
-      const current = patientsMap[editingPatientId] || {};
       const result = await updatePatient(editingPatientId, {
-        ...current,
         ...payload,
-        createdAt: Number.isFinite(Number(current.createdAt)) ? Number(current.createdAt) : Date.now()
+        createdAt: Number.isFinite(Number(current.createdAt)) ? Number(current.createdAt) : payload.createdAt
       });
 
       if (!result.ok) {
@@ -1005,7 +1355,7 @@ export function render(container) {
         return;
       }
     } else {
-      const cpf = payload.core.cpf;
+      const cpf = payload.cpf;
       const patientId = cpf.length >= 11
         ? `cpf_${cpf}`
         : `manual_${Date.now()}_${Math.random().toString(16).slice(2, 7)}`;
@@ -1039,16 +1389,31 @@ export function render(container) {
   editCancelButton.addEventListener("click", () => closeModal(editOverlay));
   editSaveButton.addEventListener("click", savePatient);
 
-  telefoneInput.addEventListener("blur", () => {
-    telefoneInput.value = formatPhoneBR(telefoneInput.value);
+  [telPrincipalInput, telSecundarioInput, respFinanceiroTelefoneInput].forEach((input) => {
+    input.addEventListener("blur", () => {
+      input.value = formatPhoneBR(input.value);
+    });
   });
 
-  cpfInput.addEventListener("blur", () => {
-    cpfInput.value = formatCpfCnpj(cpfInput.value);
+  [cpfPacienteInput, respFinanceiroCpfCnpjInput].forEach((input) => {
+    input.addEventListener("blur", () => {
+      input.value = formatCpfCnpj(input.value);
+    });
   });
 
   cepInput.addEventListener("blur", () => {
     cepInput.value = formatCep(cepInput.value);
+  });
+
+  dataNascimentoInput.addEventListener("blur", () => {
+    const normalized = normalizeDate(dataNascimentoInput.value);
+    if (normalized) {
+      dataNascimentoInput.value = normalized;
+    }
+  });
+
+  ufInput.addEventListener("blur", () => {
+    ufInput.value = String(ufInput.value || "").trim().toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2);
   });
 
   fichaClose.addEventListener("click", () => closeModal(fichaOverlay));

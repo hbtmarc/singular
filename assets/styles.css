@@ -545,6 +545,41 @@ body:not(.auth-mode) #auth-root {
   font-size: 15px;
 }
 
+.ficha-section-card {
+  gap: 10px;
+}
+
+.ficha-fields-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) 1fr;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.ficha-field-label,
+.ficha-field-value {
+  padding: 8px 10px;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: #fff;
+  font-size: 13px;
+}
+
+.ficha-field-label {
+  font-weight: 600;
+  color: #1e3a8a;
+  background: var(--primary-soft);
+}
+
+.ficha-field-value:nth-child(2n) {
+  border-right: 0;
+}
+
+.ficha-fields-grid > :nth-last-child(-n + 2) {
+  border-bottom: 0;
+}
+
 .ficha-section p {
   margin: 0;
   font-size: 14px;
@@ -667,6 +702,43 @@ body:not(.auth-mode) #auth-root {
   gap: 8px;
   border-top: 1px solid var(--border);
   padding-top: 8px;
+}
+
+.form-required-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.required-asterisk {
+  color: #b91c1c;
+  font-weight: 700;
+}
+
+.required-label::after {
+  content: " *";
+  color: #b91c1c;
+  font-weight: 700;
+}
+
+.patient-form-section {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-soft);
+  padding: 12px;
+}
+
+.patient-form-section h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.patient-form-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
 }
 
 .agenda-edit-title {
