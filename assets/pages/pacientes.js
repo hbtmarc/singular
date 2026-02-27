@@ -196,6 +196,97 @@ function buildLegacyFromCsvRow(rawRow, normalizedRow) {
   };
 }
 
+function normalizeDiaSemana(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  const normalized = raw
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z]/g, "");
+
+  if (normalized.startsWith("segunda")) return "segunda";
+  if (normalized.startsWith("terca") || normalized.startsWith("terça")) return "terca";
+  if (normalized.startsWith("quarta")) return "quarta";
+  if (normalized.startsWith("quinta")) return "quinta";
+  if (normalized.startsWith("sexta")) return "sexta";
+  if (normalized.startsWith("sabado")) return "sabado";
+  if (normalized.startsWith("domingo")) return "domingo";
+
+  return "";
+}
+
+function formatDiaSemanaLabel(value) {
+  const dia = normalizeDiaSemana(value);
+  const labels = {
+    segunda: "Segunda-feira",
+    terca: "Terça-feira",
+    quarta: "Quarta-feira",
+    quinta: "Quinta-feira",
+    sexta: "Sexta-feira",
+    sabado: "Sábado",
+    domingo: "Domingo"
+  };
+  return labels[dia] || "Não informado";
+}
+
+function buildAgendaSlotsFromPlano(patient) {
+  const plano = patient?.planoTerapias && typeof patient.planoTerapias === "object"
+    ? patient.planoTerapias
+    : {};
+
+  return [1, 2, 3].map((slotIndex) => {
+    const slot = plano[String(slotIndex)] && typeof plano[String(slotIndex)] === "object"
+      ? plano[String(slotIndex)]
+      : {};
+
+    return {
+      slotIndex,
+      terapia: String(slot.terapia || "").trim(),
+      diaSemana: normalizeDiaSemana(slot.diaSemana),
+      profissional: String(slot.profissional || "").trim()
+    };
+  });
+}
+
+function buildAgendaSlotsFromDadosOriginais(dadosOriginais) {
+  const normalizedMap = {};
+  Object.keys(dadosOriginais || {}).forEach((key) => {
+    const normalizedKey = normalizeHeaderKey(key);
+    if (!normalizedKey) {
+      return;
+    }
+    normalizedMap[normalizedKey] = String(dadosOriginais[key] || "").trim();
+  });
+
+  const roman = ["i", "ii", "iii"];
+  return [1, 2, 3].map((slotIndex, index) => {
+    const suffix = roman[index];
+    const terapia = String(normalizedMap[`terapia${suffix}`] || "").trim();
+    const diaRaw = String(normalizedMap[`data${suffix}`] || normalizedMap[`dia${suffix}`] || "").trim();
+    const profissional = String(normalizedMap[`profissional${suffix}`] || "").trim();
+
+    return {
+      slotIndex,
+      terapia,
+      diaSemana: normalizeDiaSemana(diaRaw),
+      profissional
+    };
+  });
+}
+
+function getAgendaSlotsForDisplay(patient, dadosOriginais) {
+  const fromPlano = buildAgendaSlotsFromPlano(patient);
+  const hasPlanoData = fromPlano.some((slot) => slot.terapia || slot.diaSemana || slot.profissional);
+  if (hasPlanoData) {
+    return fromPlano;
+  }
+  return buildAgendaSlotsFromDadosOriginais(dadosOriginais);
+}
+
 function setFeedback(element, message, type = "info") {
   const colors = {
     info: "#6b7280",
@@ -397,6 +488,56 @@ export function render(container) {
           <label class="admin-label" for="pac-cidade">Cidade</label>
           <input id="pac-cidade" class="admin-input" type="text" placeholder="Cidade" />
 
+          <div class="agenda-edit-wrap">
+            <p class="admin-label agenda-edit-title">Agenda (plano terapêutico)</p>
+            <div class="agenda-edit-grid">
+              <div class="agenda-edit-row">
+                <input id="pac-agenda-terapia-1" class="admin-input" type="text" placeholder="Terapia (slot 1)" />
+                <select id="pac-agenda-dia-1" class="admin-input">
+                  <option value="">Dia</option>
+                  <option value="segunda">Segunda-feira</option>
+                  <option value="terca">Terça-feira</option>
+                  <option value="quarta">Quarta-feira</option>
+                  <option value="quinta">Quinta-feira</option>
+                  <option value="sexta">Sexta-feira</option>
+                  <option value="sabado">Sábado</option>
+                  <option value="domingo">Domingo</option>
+                </select>
+                <input id="pac-agenda-prof-1" class="admin-input" type="text" placeholder="Profissional (slot 1)" />
+              </div>
+
+              <div class="agenda-edit-row">
+                <input id="pac-agenda-terapia-2" class="admin-input" type="text" placeholder="Terapia (slot 2)" />
+                <select id="pac-agenda-dia-2" class="admin-input">
+                  <option value="">Dia</option>
+                  <option value="segunda">Segunda-feira</option>
+                  <option value="terca">Terça-feira</option>
+                  <option value="quarta">Quarta-feira</option>
+                  <option value="quinta">Quinta-feira</option>
+                  <option value="sexta">Sexta-feira</option>
+                  <option value="sabado">Sábado</option>
+                  <option value="domingo">Domingo</option>
+                </select>
+                <input id="pac-agenda-prof-2" class="admin-input" type="text" placeholder="Profissional (slot 2)" />
+              </div>
+
+              <div class="agenda-edit-row">
+                <input id="pac-agenda-terapia-3" class="admin-input" type="text" placeholder="Terapia (slot 3)" />
+                <select id="pac-agenda-dia-3" class="admin-input">
+                  <option value="">Dia</option>
+                  <option value="segunda">Segunda-feira</option>
+                  <option value="terca">Terça-feira</option>
+                  <option value="quarta">Quarta-feira</option>
+                  <option value="quinta">Quinta-feira</option>
+                  <option value="sexta">Sexta-feira</option>
+                  <option value="sabado">Sábado</option>
+                  <option value="domingo">Domingo</option>
+                </select>
+                <input id="pac-agenda-prof-3" class="admin-input" type="text" placeholder="Profissional (slot 3)" />
+              </div>
+            </div>
+          </div>
+
           <p id="pac-edit-feedback" class="admin-feedback"></p>
 
           <div class="admin-modal-actions">
@@ -456,6 +597,9 @@ export function render(container) {
   const enderecoInput = container.querySelector("#pac-end");
   const bairroInput = container.querySelector("#pac-bairro");
   const cidadeInput = container.querySelector("#pac-cidade");
+  const agendaTerapiaInputs = [1, 2, 3].map((index) => container.querySelector(`#pac-agenda-terapia-${index}`));
+  const agendaDiaInputs = [1, 2, 3].map((index) => container.querySelector(`#pac-agenda-dia-${index}`));
+  const agendaProfissionalInputs = [1, 2, 3].map((index) => container.querySelector(`#pac-agenda-prof-${index}`));
 
   const fichaOverlay = container.querySelector("#pac-ficha-modal");
   const fichaClose = container.querySelector("#pac-ficha-close");
@@ -534,6 +678,15 @@ export function render(container) {
     enderecoInput.value = "";
     bairroInput.value = "";
     cidadeInput.value = "";
+    agendaTerapiaInputs.forEach((input) => {
+      input.value = "";
+    });
+    agendaDiaInputs.forEach((input) => {
+      input.value = "";
+    });
+    agendaProfissionalInputs.forEach((input) => {
+      input.value = "";
+    });
   }
 
   function openEditModal(patientId = "") {
@@ -557,6 +710,13 @@ export function render(container) {
       enderecoInput.value = endereco.logradouro;
       bairroInput.value = endereco.bairro;
       cidadeInput.value = endereco.cidade;
+
+      const agendaSlots = getAgendaSlotsForDisplay(patient, patient?.dadosOriginais || {});
+      agendaSlots.forEach((slot, index) => {
+        agendaTerapiaInputs[index].value = slot.terapia || "";
+        agendaDiaInputs[index].value = normalizeDiaSemana(slot.diaSemana) || "";
+        agendaProfissionalInputs[index].value = slot.profissional || "";
+      });
     }
 
     openModal(editOverlay);
@@ -622,6 +782,49 @@ export function render(container) {
       `
       : "";
 
+    const agendaSlots = getAgendaSlotsForDisplay(patient, dadosOriginais);
+    const hasAgendaData = agendaSlots.some((slot) => slot.terapia || slot.diaSemana || slot.profissional);
+    const agendaRows = hasAgendaData
+      ? agendaSlots.map((slot) => {
+        const terapia = String(slot.terapia || "").trim();
+        const diaSemana = normalizeDiaSemana(slot.diaSemana);
+        const profissional = String(slot.profissional || "").trim();
+        const incomplete = !terapia || !diaSemana || !profissional;
+
+        const terapiaHtml = terapia
+          ? terapia
+          : '<span class="muted">Não informado</span>';
+        const diaHtml = diaSemana
+          ? formatDiaSemanaLabel(diaSemana)
+          : '<span class="muted">Não informado</span>';
+        const profissionalHtml = profissional
+          ? profissional
+          : '<span class="muted">Não informado</span>';
+
+        return `
+          <div class="agenda-grid-cell">${terapiaHtml}</div>
+          <div class="agenda-grid-cell">${diaHtml}</div>
+          <div class="agenda-grid-cell">${profissionalHtml}${incomplete ? ' <span class="badge-warn">Incompleto</span>' : ""}</div>
+        `;
+      }).join("")
+      : "";
+
+    const agendaSection = `
+      <section class="ficha-section">
+        <h3>Agenda</h3>
+        ${hasAgendaData
+          ? `
+            <div class="agenda-grid">
+              <div class="agenda-grid-cell agenda-grid-head">Terapia</div>
+              <div class="agenda-grid-cell agenda-grid-head">Dia</div>
+              <div class="agenda-grid-cell agenda-grid-head">Profissional</div>
+              ${agendaRows}
+            </div>
+          `
+          : '<p class="muted">Agenda não informada.</p>'}
+      </section>
+    `;
+
     fichaBody.innerHTML = `
       <section class="ficha-section">
         <h3>Dados principais</h3>
@@ -645,6 +848,8 @@ export function render(container) {
         <h3>Responsável financeiro</h3>
         <p>${String(patient?.responsavelFinanceiro || "").trim() || "Não informado"}</p>
       </section>
+
+      ${agendaSection}
 
       ${sourceSection}
 
@@ -767,7 +972,24 @@ export function render(container) {
         bairro: String(bairroInput.value || "").trim(),
         cidade: String(cidadeInput.value || "").trim()
       },
-      responsavelFinanceiro: String(responsavelInput.value || "").trim()
+      responsavelFinanceiro: String(responsavelInput.value || "").trim(),
+      planoTerapias: (() => {
+        const plano = {};
+        [1, 2, 3].forEach((slotIndex, index) => {
+          const terapia = String(agendaTerapiaInputs[index].value || "").trim();
+          const diaSemana = normalizeDiaSemana(agendaDiaInputs[index].value || "");
+          const profissional = String(agendaProfissionalInputs[index].value || "").trim();
+
+          if (terapia || diaSemana || profissional) {
+            plano[String(slotIndex)] = {
+              terapia,
+              diaSemana,
+              profissional
+            };
+          }
+        });
+        return plano;
+      })()
     };
 
     if (editingPatientId) {

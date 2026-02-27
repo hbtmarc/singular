@@ -614,6 +614,76 @@ body:not(.auth-mode) #auth-root {
   font-weight: 700;
 }
 
+.agenda-grid {
+  display: grid;
+  grid-template-columns: 1fr minmax(130px, 180px) 1fr;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.agenda-grid-cell {
+  padding: 8px 10px;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  background: #fff;
+}
+
+.agenda-grid-cell:nth-child(3n) {
+  border-right: 0;
+}
+
+.agenda-grid-cell:nth-last-child(-n + 3) {
+  border-bottom: 0;
+}
+
+.agenda-grid-head {
+  background: var(--primary-soft);
+  color: #1e3a8a;
+  font-weight: 700;
+}
+
+.badge-warn {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid #fcd34d;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.agenda-edit-wrap {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.agenda-edit-title {
+  margin: 0;
+}
+
+.agenda-edit-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.agenda-edit-row {
+  display: grid;
+  grid-template-columns: 1fr 180px 1fr;
+  gap: 8px;
+}
+
 @media (max-width: 900px) {
   .app {
     grid-template-columns: 1fr;
@@ -644,5 +714,9 @@ body:not(.auth-mode) #auth-root {
   .menu a {
     flex: 1 1 calc(50% - 8px);
     text-align: center;
+  }
+
+  .agenda-edit-row {
+    grid-template-columns: 1fr;
   }
 }
