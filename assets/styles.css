@@ -147,6 +147,9 @@ body:not(.auth-mode) #auth-root {
 
 .content {
   padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .card {
@@ -155,10 +158,6 @@ body:not(.auth-mode) #auth-root {
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   padding: 16px;
-}
-
-.card + .card {
-  margin-top: 12px;
 }
 
 .grid {
