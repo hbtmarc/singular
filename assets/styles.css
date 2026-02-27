@@ -422,6 +422,17 @@ body:not(.auth-mode) #auth-root {
   color: #b91c1c;
 }
 
+.admin-error-details {
+  min-height: 18px;
+  margin: 0;
+  color: #7f1d1d;
+}
+
+.admin-error-details small {
+  display: block;
+  font-size: 12px;
+}
+
 .admin-modal-overlay {
   position: fixed;
   inset: 0;
@@ -477,6 +488,130 @@ body:not(.auth-mode) #auth-root {
   cursor: pointer;
   font-size: 20px;
   line-height: 1;
+}
+
+.patients-table {
+  min-width: 900px;
+}
+
+.patients-preview-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
+
+.patients-preview-list li {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.patient-name-link {
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  font: inherit;
+  font-weight: 600;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.ficha-modal {
+  max-width: 860px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ficha-modal .admin-modal-body {
+  overflow: auto;
+  margin-top: 10px;
+  padding-right: 4px;
+}
+
+.ficha-section {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  background: var(--surface-soft);
+}
+
+.ficha-section h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.ficha-section p {
+  margin: 0;
+  font-size: 14px;
+}
+
+.ficha-secondary {
+  margin: -2px 0 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ficha-original-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) 1fr;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.ficha-original-grid-cell {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  font-size: 13px;
+  background: #fff;
+  word-break: break-word;
+}
+
+.ficha-original-grid-cell:nth-last-child(-n + 2) {
+  border-bottom: 0;
+}
+
+.ficha-collapsible {
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--surface-soft);
+}
+
+.ficha-collapsible > summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 0.75rem 0.9rem;
+  list-style: none;
+}
+
+.ficha-collapsible > summary::-webkit-details-marker {
+  display: none;
+}
+
+.ficha-collapsible-content {
+  padding: 0 0.9rem 0.9rem;
+  max-height: 16rem;
+  overflow: auto;
+}
+
+.ficha-original-grid-cell:nth-child(2n) {
+  border-right: 0;
+}
+
+.ficha-original-grid-key {
+  font-weight: 600;
+}
+
+.ficha-original-grid-head {
+  background: var(--primary-soft);
+  color: #1e3a8a;
+  font-weight: 700;
 }
 
 @media (max-width: 900px) {
