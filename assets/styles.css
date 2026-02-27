@@ -525,7 +525,20 @@ body:not(.auth-mode) #auth-root {
   overflow: hidden;
 }
 
+.patient-edit-modal {
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .ficha-modal .admin-modal-body {
+  overflow: auto;
+  margin-top: 10px;
+  padding-right: 4px;
+}
+
+.patient-edit-modal .admin-modal-body {
   overflow: auto;
   margin-top: 10px;
   padding-right: 4px;

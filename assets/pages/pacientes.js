@@ -651,7 +651,7 @@ export function render(container) {
     </section>
 
     <div id="pac-edit-modal" class="admin-modal-overlay" aria-hidden="true">
-      <div class="admin-modal" role="dialog" aria-modal="true" aria-labelledby="pac-edit-title">
+      <div class="admin-modal patient-edit-modal" role="dialog" aria-modal="true" aria-labelledby="pac-edit-title">
         <button id="pac-edit-close" type="button" class="admin-modal-close" aria-label="Fechar">×</button>
         <h2 id="pac-edit-title">Novo paciente</h2>
 
