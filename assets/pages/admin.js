@@ -1,4 +1,5 @@
 import { getUserProfile, listUserProfiles, upsertUserProfile } from "../firebase.js";
+import { ICON_COPY } from "../icons.js";
 
 const ROLE_OPTIONS = ["admin", "gerente", "administrativo", "profissional"];
 
@@ -131,7 +132,7 @@ export function render(container) {
             <td style="border-bottom:1px solid #f3f4f6; padding:8px;">${profile.role}</td>
             <td style="border-bottom:1px solid #f3f4f6; padding:8px;">${ativoText}</td>
             <td style="border-bottom:1px solid #f3f4f6; padding:8px;">
-              <button type="button" data-copy-uid="${uid}" style="padding:6px 10px; border:1px solid #d1d5db; border-radius:8px; background:#fff; cursor:pointer;">Copiar UID</button>
+              <button type="button" class="admin-btn-icon" data-copy-uid="${uid}" title="Copiar UID" aria-label="Copiar UID">${ICON_COPY}</button>
             </td>
           </tr>
         `;

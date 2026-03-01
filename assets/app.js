@@ -1,6 +1,8 @@
 import { initFirebase, onUserChanged, logout, readUserProfile, watchUserProfile } from "./firebase.js";
 
-const ASSET_VERSION = "20260301-2";
+const APP_BUNDLE_VERSION = "20260301-6";
+const appBundleVersionFromUrl = new URL(import.meta.url).searchParams.get("v");
+const ASSET_VERSION = String(appBundleVersionFromUrl || APP_BUNDLE_VERSION).trim() || APP_BUNDLE_VERSION;
 
 function withAssetVersion(modulePath) {
   const basePath = String(modulePath || "").trim();

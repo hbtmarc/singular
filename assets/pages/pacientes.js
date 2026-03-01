@@ -14,6 +14,9 @@ import {
   formatCep,
   formatDateBR
 } from "../format.js";
+import {
+  ICON_EDIT, ICON_EYE, ICON_EYE_OFF, iconBtn
+} from "../icons.js";
 
 function normalizeHeaderKey(value) {
   return String(value || "")
@@ -965,8 +968,10 @@ export function render(container) {
         ? "<span class=\"admin-empty\">Somente leitura</span>"
         : `
           <div class="admin-inline-actions">
-            <button type="button" class="admin-btn admin-btn-secondary" data-action="editar" data-id="${patient.id}">Editar</button>
-            <button type="button" class="admin-btn admin-btn-secondary" data-action="toggle" data-id="${patient.id}">${core.ativo ? "Inativar" : "Ativar"}</button>
+            ${iconBtn({ icon: ICON_EDIT, label: "Editar", action: "editar", dataId: patient.id, dataKey: "data-id" })}
+            ${core.ativo
+              ? iconBtn({ icon: ICON_EYE_OFF, label: "Inativar", action: "toggle", dataId: patient.id, dataKey: "data-id" })
+              : iconBtn({ icon: ICON_EYE, label: "Ativar", action: "toggle", dataId: patient.id, dataKey: "data-id", cls: "admin-btn-icon--success" })}
           </div>
         `;
 

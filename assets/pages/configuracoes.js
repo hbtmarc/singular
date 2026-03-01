@@ -1,3 +1,5 @@
+import { ICON_COPY } from "../icons.js";
+
 export function render(container) {
   const status = window.__firebaseStatus || {
     ok: false,
@@ -46,7 +48,7 @@ export function render(container) {
       <p><strong>E-mail:</strong> ${email}</p>
       <p>
         <strong>UID:</strong> <span id="meu-uid">${uid}</span>
-        <button id="copiar-uid" type="button" style="margin-left:8px; padding:6px 10px; border:1px solid #d1d5db; border-radius:8px; background:#fff; cursor:pointer;">Copiar UID</button>
+        <button id="copiar-uid" type="button" class="admin-btn-icon" title="Copiar UID" aria-label="Copiar UID" style="margin-left:8px; vertical-align:middle;">${ICON_COPY}</button>
       </p>
       <p><strong>Perfil atual:</strong> ${roleText}</p>
       <p><strong>Ativo:</strong> ${ativoText}</p>

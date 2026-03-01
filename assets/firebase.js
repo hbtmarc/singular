@@ -85,8 +85,57 @@ function normalizeUserProfile(profile) {
     email,
     role,
     ativo: profile.ativo === true,
-    updatedAt: typeof profile.updatedAt === "number" ? profile.updatedAt : null
+    updatedAt: typeof profile.updatedAt === "number" ? profile.updatedAt : null,
+    deletedAt: typeof profile.deletedAt === "number" ? profile.deletedAt : null,
+    deletedBy: typeof profile.deletedBy === "string" ? profile.deletedBy : ""
   };
+}
+
+function getCurrentUid() {
+  const auth = getAuthInstance();
+  return String(auth?.currentUser?.uid || "").trim();
+}
+
+function isPermissionDeniedError(error) {
+  const code = String(error?.code || "").toUpperCase();
+  const message = String(error?.message || "").toLowerCase();
+  return code.includes("PERMISSION_DENIED") || message.includes("permission_denied");
+}
+
+function getFirebaseErrorMessage(error, fallbackMessage) {
+  if (isPermissionDeniedError(error)) {
+    return "Permissão negada no RTDB. Verifique as regras para escrita em /users.";
+  }
+
+  return fallbackMessage;
+}
+
+async function updateWithFallbackPatches(reference, patches) {
+  const attempts = Array.isArray(patches) ? patches : [];
+
+  if (!attempts.length) {
+    throw new Error("Nenhum patch informado para updateWithFallbackPatches.");
+  }
+
+  let lastError = null;
+
+  for (const patch of attempts) {
+    try {
+      await update(reference, patch);
+      return {
+        ok: true,
+        patch
+      };
+    } catch (error) {
+      lastError = error;
+
+      if (!isPermissionDeniedError(error)) {
+        throw error;
+      }
+    }
+  }
+
+  throw lastError || new Error("Falha ao atualizar registro no RTDB.");
 }
 
 export function encodeEmailKey(email) {
@@ -327,6 +376,18 @@ export async function getUidByEmail(email) {
     const indexData = snapshot.val();
     const uid = typeof indexData?.uid === "string" ? indexData.uid : null;
 
+    if (uid) {
+      const profileSnap = await get(dbRef(database, `users/${uid}`));
+      if (!profileSnap.exists()) {
+        await set(dbRef(database, `emailIndex/${key}`), null);
+        return {
+          ok: true,
+          uid: null,
+          message: "Índice de e-mail inconsistente foi corrigido automaticamente."
+        };
+      }
+    }
+
     return {
       ok: true,
       uid,
@@ -369,10 +430,15 @@ export async function upsertUserProfile(uid, profile) {
 
   try {
     const database = getDatabaseInstance();
+    const currentSnap = await get(dbRef(database, `users/${uid}`));
+    const current = currentSnap.exists() ? currentSnap.val() : {};
+
     await set(dbRef(database, `users/${uid}`), {
       email,
       role,
       ativo,
+      deletedAt: ativo ? null : (typeof current?.deletedAt === "number" ? current.deletedAt : null),
+      deletedBy: ativo ? "" : (typeof current?.deletedBy === "string" ? current.deletedBy : ""),
       updatedAt: Date.now()
     });
 
@@ -384,6 +450,187 @@ export async function upsertUserProfile(uid, profile) {
     return {
       ok: false,
       message: "Não foi possível salvar o perfil no RTDB."
+    };
+  }
+}
+
+export async function softDeleteUserProfile(uid) {
+  const normalizedUid = String(uid || "").trim();
+
+  if (!normalizedUid) {
+    return {
+      ok: false,
+      message: "UID não informado para exclusão."
+    };
+  }
+
+  try {
+    const database = getDatabaseInstance();
+    const userReference = dbRef(database, `users/${normalizedUid}`);
+    const snapshot = await get(userReference);
+
+    if (!snapshot.exists()) {
+      return {
+        ok: false,
+        message: "Perfil não encontrado no projeto."
+      };
+    }
+
+    const now = Date.now();
+    const currentUid = getCurrentUid();
+    const fallbackAttempts = [
+      {
+        ativo: false,
+        deletedAt: now,
+        deletedBy: currentUid,
+        updatedAt: now
+      },
+      {
+        ativo: false,
+        deletedAt: now,
+        updatedAt: now
+      },
+      {
+        ativo: false,
+        updatedAt: now
+      }
+    ];
+
+    const updateResult = await updateWithFallbackPatches(userReference, fallbackAttempts);
+    const appliedPatch = updateResult.patch || fallbackAttempts[fallbackAttempts.length - 1];
+
+    const usedCompatibilityPatch = !Object.prototype.hasOwnProperty.call(appliedPatch, "deletedAt");
+
+    return {
+      ok: true,
+      message: usedCompatibilityPatch
+        ? "Usuário atualizado em modo compatível com as regras atuais do RTDB."
+        : "Usuário excluído do projeto (soft delete).",
+      profilePatch: {
+        ativo: appliedPatch.ativo === true,
+        deletedAt: typeof appliedPatch.deletedAt === "number" ? appliedPatch.deletedAt : null,
+        deletedBy: typeof appliedPatch.deletedBy === "string" ? appliedPatch.deletedBy : "",
+        updatedAt: typeof appliedPatch.updatedAt === "number" ? appliedPatch.updatedAt : now
+      }
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: getFirebaseErrorMessage(error, "Não foi possível excluir usuário do projeto."),
+      code: String(error?.code || "")
+    };
+  }
+}
+
+export async function restoreUserProfile(uid) {
+  const normalizedUid = String(uid || "").trim();
+
+  if (!normalizedUid) {
+    return {
+      ok: false,
+      message: "UID não informado para restauração."
+    };
+  }
+
+  try {
+    const database = getDatabaseInstance();
+    const userReference = dbRef(database, `users/${normalizedUid}`);
+    const snapshot = await get(userReference);
+
+    if (!snapshot.exists()) {
+      return {
+        ok: false,
+        message: "Perfil não encontrado no projeto."
+      };
+    }
+
+    const now = Date.now();
+    const fallbackAttempts = [
+      {
+        ativo: true,
+        deletedAt: null,
+        deletedBy: "",
+        updatedAt: now
+      },
+      {
+        ativo: true,
+        deletedAt: null,
+        updatedAt: now
+      },
+      {
+        ativo: true,
+        updatedAt: now
+      }
+    ];
+
+    const updateResult = await updateWithFallbackPatches(userReference, fallbackAttempts);
+    const appliedPatch = updateResult.patch || fallbackAttempts[fallbackAttempts.length - 1];
+
+    const usedCompatibilityPatch = !Object.prototype.hasOwnProperty.call(appliedPatch, "deletedAt");
+
+    return {
+      ok: true,
+      message: usedCompatibilityPatch
+        ? "Usuário restaurado em modo compatível com as regras atuais do RTDB."
+        : "Usuário restaurado com sucesso.",
+      profilePatch: {
+        ativo: appliedPatch.ativo === true,
+        deletedAt: Object.prototype.hasOwnProperty.call(appliedPatch, "deletedAt")
+          ? (typeof appliedPatch.deletedAt === "number" ? appliedPatch.deletedAt : null)
+          : null,
+        deletedBy: Object.prototype.hasOwnProperty.call(appliedPatch, "deletedBy")
+          ? (typeof appliedPatch.deletedBy === "string" ? appliedPatch.deletedBy : "")
+          : "",
+        updatedAt: typeof appliedPatch.updatedAt === "number" ? appliedPatch.updatedAt : now
+      }
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: getFirebaseErrorMessage(error, "Não foi possível restaurar usuário."),
+      code: String(error?.code || "")
+    };
+  }
+}
+
+export async function removeUserFromProject(uid) {
+  const normalizedUid = String(uid || "").trim();
+
+  if (!normalizedUid) {
+    return {
+      ok: false,
+      message: "UID não informado para remoção."
+    };
+  }
+
+  try {
+    const database = getDatabaseInstance();
+    const snapshot = await get(dbRef(database, `users/${normalizedUid}`));
+
+    if (!snapshot.exists()) {
+      return {
+        ok: true,
+        message: "Perfil já não existia no projeto."
+      };
+    }
+
+    const profile = normalizeUserProfile(snapshot.val());
+    if (profile?.email) {
+      const key = encodeEmailKey(profile.email);
+      await set(dbRef(database, `emailIndex/${key}`), null);
+    }
+
+    await set(dbRef(database, `users/${normalizedUid}`), null);
+
+    return {
+      ok: true,
+      message: "Usuário removido do projeto com sucesso."
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: getFirebaseErrorMessage(error, "Não foi possível remover usuário do projeto."),
+      code: String(error?.code || "")
     };
   }
 }

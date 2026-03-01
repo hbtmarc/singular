@@ -6,8 +6,15 @@ import {
   listUserProfiles,
   upsertUserProfile,
   upsertEmailIndex,
-  removeEmailIndex
+  removeEmailIndex,
+  softDeleteUserProfile,
+  restoreUserProfile,
+  removeUserFromProject
 } from "../firebase.js";
+
+import {
+  ICON_EDIT, ICON_TRASH, ICON_RESTORE, ICON_USER_X, ICON_COPY, iconBtn
+} from "../icons.js";
 
 const ROLE_OPTIONS = ["admin", "gerente", "administrativo", "profissional"];
 
@@ -68,6 +75,20 @@ function roleOptionsHtml(selectedRole) {
 }
 
 export function render(container) {
+  const isAdmin = window.__userProfile?.role === "admin";
+
+  if (!isAdmin) {
+    container.innerHTML = `
+      <section class="admin-page">
+        <article class="card">
+          <h2>Acesso restrito</h2>
+          <p class="admin-card-text">Somente administradores podem gerenciar usuários.</p>
+        </article>
+      </section>
+    `;
+    return;
+  }
+
   let usersMap = {};
   let editingUid = "";
   let editingOriginalEmail = "";
@@ -87,7 +108,7 @@ export function render(container) {
             </div>
 
             <div id="adm-busca-resultado" class="admin-result-box">Nenhuma consulta realizada.</div>
-            <button id="adm-copiar-uid-busca" type="button" class="admin-btn admin-btn-secondary" style="display:none; width:fit-content;">Copiar UID</button>
+            <button id="adm-copiar-uid-busca" type="button" class="admin-btn-icon" title="Copiar UID" aria-label="Copiar UID" style="display:none;">${ICON_COPY}</button>
           </div>
         </article>
 
@@ -132,7 +153,7 @@ export function render(container) {
                 <tr>
                   <th>E-mail</th>
                   <th>Perfil</th>
-                  <th>Ativo</th>
+                  <th>Status</th>
                   <th>UID</th>
                   <th>Atualizado em</th>
                   <th>Ações</th>
@@ -296,19 +317,29 @@ export function render(container) {
 
     listaBody.innerHTML = rows
       .map(([uid, profile]) => {
-        const ativoText = profile.ativo ? "Sim" : "Não";
+        const isDeleted = typeof profile.deletedAt === "number" && profile.deletedAt > 0;
+        const statusText = isDeleted
+          ? "Excluído do projeto"
+          : (profile.ativo ? "Ativo" : "Inativo");
+        const statusClass = isDeleted ? "status-deleted" : (profile.ativo ? "status-active" : "status-inactive");
+
+        const restoreButton = isDeleted
+          ? iconBtn({ icon: ICON_RESTORE, label: "Restaurar", action: "restaurar", dataId: uid })
+          : iconBtn({ icon: ICON_TRASH, label: "Excluir", action: "excluir", dataId: uid });
 
         return `
           <tr>
             <td>${profile.email || "Não informado"}</td>
             <td>${profile.role}</td>
-            <td>${ativoText}</td>
+            <td><span class="status-badge ${statusClass}">${statusText}</span></td>
             <td>${uid}</td>
             <td>${formatDateTime(profile.updatedAt)}</td>
             <td>
               <div class="admin-inline-actions">
-                <button type="button" data-action="editar" data-uid="${uid}" class="admin-btn admin-btn-secondary">Editar</button>
-                <button type="button" data-action="copiar" data-uid="${uid}" class="admin-btn admin-btn-secondary">Copiar UID</button>
+                ${iconBtn({ icon: ICON_EDIT, label: "Editar", action: "editar", dataId: uid })}
+                ${restoreButton}
+                ${iconBtn({ icon: ICON_USER_X, label: "Remover do projeto", action: "remover", dataId: uid, cls: "admin-btn-icon--danger" })}
+                ${iconBtn({ icon: ICON_COPY, label: "Copiar UID", action: "copiar", dataId: uid })}
               </div>
             </td>
           </tr>
@@ -565,6 +596,78 @@ export function render(container) {
     if (action === "editar") {
       enableEdit(uid, profile);
       setFeedback(listaFeedback, "Editando usuário selecionado.", "info");
+      return;
+    }
+
+    if (action === "excluir") {
+      const confirmed = window.confirm("Excluir usuário do projeto? Você poderá restaurar depois.");
+      if (!confirmed) {
+        return;
+      }
+
+      const result = await softDeleteUserProfile(uid);
+      if (!result.ok) {
+        setFeedback(listaFeedback, result.message || "Não foi possível excluir usuário.", "error");
+        return;
+      }
+
+      const appliedPatch = result.profilePatch || {
+        ativo: false,
+        deletedAt: Date.now(),
+        deletedBy: "",
+        updatedAt: Date.now()
+      };
+
+      usersMap[uid] = {
+        ...usersMap[uid],
+        ...appliedPatch
+      };
+
+      renderUserTable();
+      setFeedback(listaFeedback, result.message || "Usuário excluído do projeto com sucesso.", "success");
+      return;
+    }
+
+    if (action === "restaurar") {
+      const result = await restoreUserProfile(uid);
+      if (!result.ok) {
+        setFeedback(listaFeedback, result.message || "Não foi possível restaurar usuário.", "error");
+        return;
+      }
+
+      const appliedPatch = result.profilePatch || {
+        ativo: true,
+        deletedAt: null,
+        deletedBy: "",
+        updatedAt: Date.now()
+      };
+
+      usersMap[uid] = {
+        ...usersMap[uid],
+        ...appliedPatch
+      };
+
+      renderUserTable();
+      setFeedback(listaFeedback, result.message || "Usuário restaurado com sucesso.", "success");
+      return;
+    }
+
+    if (action === "remover") {
+      const confirmed = window.confirm("Remover usuário definitivamente do projeto (RTDB/índice)?");
+      if (!confirmed) {
+        return;
+      }
+
+      const result = await removeUserFromProject(uid);
+      if (!result.ok) {
+        setFeedback(listaFeedback, result.message || "Não foi possível remover usuário do projeto.", "error");
+        return;
+      }
+
+      delete usersMap[uid];
+      renderUserTable();
+      setFeedback(listaFeedback, "Usuário removido do projeto com sucesso.", "success");
+      return;
     }
   });
 
