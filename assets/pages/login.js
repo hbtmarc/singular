@@ -96,7 +96,7 @@ export function render(container) {
     }
 
     feedbackElement.style.color = "#374151";
-    feedbackElement.textContent = "Validando credenciais";
+    feedbackElement.innerHTML = '<div class="spinner" style="margin:8px auto 0;"></div>';
     submitButton.disabled = true;
 
     try {

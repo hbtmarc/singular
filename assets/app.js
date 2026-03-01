@@ -287,7 +287,7 @@ async function renderRoute() {
   if (!authResolved) {
     setAuthMode(true);
     if (authRoot) {
-      authRoot.innerHTML = "<article class=\"card\" style=\"max-width:420px; width:100%;\"><h2 style=\"margin-top:0;\">Carregando sessão</h2><p>Aguarde enquanto validamos seu acesso.</p></article>";
+      authRoot.innerHTML = '<div class="status-card-center"><article class="card status-card"><h2>Carregando sessão</h2><div class="spinner"></div></article></div>';
     }
     return;
   }
@@ -314,7 +314,7 @@ async function renderRoute() {
       }
     } catch (error) {
       if (authRoot) {
-        authRoot.innerHTML = "<article class=\"card\" style=\"max-width:420px; width:100%;\"><h2 style=\"margin-top:0;\">Erro ao carregar login</h2><p>Não foi possível abrir a tela de acesso.</p></article>";
+        authRoot.innerHTML = '<div class="status-card-center"><article class="card status-card"><h2>Erro ao carregar login</h2><p>Não foi possível abrir a tela de acesso.</p></article></div>';
       }
     }
 
@@ -325,7 +325,7 @@ async function renderRoute() {
     setAuthMode(false);
     const contentElement = document.getElementById("page-content");
     if (contentElement) {
-      contentElement.innerHTML = "<div class=\"card\"><h2>Carregando acesso</h2><p>Aguarde enquanto validamos seu perfil no RTDB.</p></div>";
+      contentElement.innerHTML = '<div class="status-card-center"><article class="card status-card"><h2>Carregando acesso</h2><div class="spinner"></div></article></div>';
     }
     return;
   }
@@ -378,7 +378,7 @@ async function renderRoute() {
       );
     }
   } catch (error) {
-    contentElement.innerHTML = "<div class=\"card\"><h2>Erro ao carregar página</h2><p>Não foi possível carregar este módulo.</p></div>";
+    contentElement.innerHTML = '<div class="status-card-center"><article class="card status-card"><h2>Erro ao carregar página</h2><p>Não foi possível carregar este módulo.</p></article></div>';
     console.error("Erro no roteamento:", error);
   }
 }
