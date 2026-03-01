@@ -1,5 +1,16 @@
 import { initFirebase, onUserChanged, logout, readUserProfile, watchUserProfile } from "./firebase.js";
 
+const ASSET_VERSION = "20260301-2";
+
+function withAssetVersion(modulePath) {
+  const basePath = String(modulePath || "").trim();
+  if (!basePath) {
+    return basePath;
+  }
+  const separator = basePath.includes("?") ? "&" : "?";
+  return `${basePath}${separator}v=${ASSET_VERSION}`;
+}
+
 const routes = {
   "#/login": {
     title: "Acesso",
@@ -295,7 +306,7 @@ async function renderRoute() {
     updateSidebarForAuth();
 
     try {
-      const loginModule = await import(routes[loginHash].modulePath);
+      const loginModule = await import(withAssetVersion(routes[loginHash].modulePath));
       if (authRoot) {
         loginModule.render(authRoot);
       }
@@ -352,7 +363,7 @@ async function renderRoute() {
   contentElement.innerHTML = "";
 
   try {
-    const pageModule = await import(route.modulePath);
+    const pageModule = await import(withAssetVersion(route.modulePath));
     pageModule.render(contentElement);
 
     const profileWarning = getProfileWarningMessage();

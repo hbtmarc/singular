@@ -431,6 +431,68 @@ function formatDiaSemanaLabel(value) {
   return labels[dia] || "Não informado";
 }
 
+function normalizeAgendaTextValue(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  const normalized = raw
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const normalizedToken = normalized
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!normalizedToken) {
+    return "";
+  }
+
+  const emptyMarkers = new Set([
+    "nao informado",
+    "nao informada",
+    "n/a",
+    "na",
+    "-",
+    "--",
+    "null",
+    "undefined",
+    "sem informacao",
+    "sem preencher",
+    "sem preenchimento",
+    "nao preenchido",
+    "nao preenchida",
+    "vazio"
+  ]);
+
+  if (emptyMarkers.has(normalized) || emptyMarkers.has(normalizedToken)) {
+    return "";
+  }
+
+  if (/\bnao\s+informad[oa]\b/.test(normalizedToken)) {
+    return "";
+  }
+
+  if (/\bsem\s+informacao\b/.test(normalizedToken)) {
+    return "";
+  }
+
+  if (/\bnao\s+preenchid[oa]\b/.test(normalizedToken)) {
+    return "";
+  }
+
+  if (/^n\s*a$/.test(normalizedToken)) {
+    return "";
+  }
+
+  return raw;
+}
+
 function buildAgendaSlotsFromPlano(patient) {
   const plano = patient?.planoTerapias && typeof patient.planoTerapias === "object"
     ? patient.planoTerapias
@@ -443,9 +505,9 @@ function buildAgendaSlotsFromPlano(patient) {
 
     return {
       slotIndex,
-      terapia: String(slot.terapia || "").trim(),
-      diaSemana: normalizeDiaSemana(slot.diaSemana),
-      profissional: String(slot.profissional || "").trim()
+      terapia: normalizeAgendaTextValue(slot.terapia),
+      diaSemana: normalizeDiaSemana(normalizeAgendaTextValue(slot.diaSemana)),
+      profissional: normalizeAgendaTextValue(slot.profissional)
     };
   });
 }
@@ -463,9 +525,9 @@ function buildAgendaSlotsFromDadosOriginais(dadosOriginais) {
   const roman = ["i", "ii", "iii"];
   return [1, 2, 3].map((slotIndex, index) => {
     const suffix = roman[index];
-    const terapia = String(normalizedMap[`terapia${suffix}`] || "").trim();
-    const diaRaw = String(normalizedMap[`data${suffix}`] || normalizedMap[`dia${suffix}`] || "").trim();
-    const profissional = String(normalizedMap[`profissional${suffix}`] || "").trim();
+    const terapia = normalizeAgendaTextValue(normalizedMap[`terapia${suffix}`]);
+    const diaRaw = normalizeAgendaTextValue(normalizedMap[`data${suffix}`] || normalizedMap[`dia${suffix}`]);
+    const profissional = normalizeAgendaTextValue(normalizedMap[`profissional${suffix}`]);
 
     return {
       slotIndex,
@@ -861,6 +923,7 @@ export function render(container) {
 
   const fichaOverlay = container.querySelector("#pac-ficha-modal");
   const fichaClose = container.querySelector("#pac-ficha-close");
+  const fichaTitle = container.querySelector("#pac-ficha-title");
   const fichaBody = container.querySelector("#pac-ficha-body");
 
   const reportOverlay = container.querySelector("#pac-report-modal");
@@ -1014,6 +1077,18 @@ export function render(container) {
       ? patient.dadosOriginais
       : {};
 
+    const patientDisplayName = [
+      core.nome,
+      perfil?.pessoais?.nomePaciente,
+      patient?.nome,
+      patient?.core?.nome
+    ]
+      .map((value) => String(value || "").trim())
+      .find((value) => value);
+    fichaTitle.textContent = patientDisplayName
+      ? `Ficha do paciente — ${patientDisplayName}`
+      : "Ficha do paciente";
+
     const display = (value, formatter = null) => {
       const raw = String(value ?? "").trim();
       if (!raw) {
@@ -1142,31 +1217,40 @@ export function render(container) {
       : "";
 
     const agendaSlots = getAgendaSlotsForDisplay(patient, dadosOriginais);
-    const hasAgendaData = agendaSlots.some((slot) => slot.terapia || slot.diaSemana || slot.profissional);
-    const agendaRows = hasAgendaData
-      ? agendaSlots.map((slot) => {
-        const terapia = String(slot.terapia || "").trim();
-        const diaSemana = normalizeDiaSemana(slot.diaSemana);
-        const profissional = String(slot.profissional || "").trim();
-        const incomplete = !terapia || !diaSemana || !profissional;
 
-        const terapiaHtml = terapia
-          ? terapia
-          : '<span class="muted">Não informado</span>';
-        const diaHtml = diaSemana
-          ? formatDiaSemanaLabel(diaSemana)
-          : '<span class="muted">Não informado</span>';
-        const profissionalHtml = profissional
-          ? profissional
-          : '<span class="muted">Não informado</span>';
+    const agendaRowBlocks = [];
+    for (let i = 0; i < agendaSlots.length; i++) {
+      const slot = agendaSlots[i];
+      const terapia = normalizeAgendaTextValue(slot ? slot.terapia : "");
+      const diaSemana = normalizeDiaSemana(normalizeAgendaTextValue(slot ? slot.diaSemana : ""));
+      const profissional = normalizeAgendaTextValue(slot ? slot.profissional : "");
 
-        return `
-          <div class="agenda-grid-cell">${terapiaHtml}</div>
-          <div class="agenda-grid-cell">${diaHtml}</div>
-          <div class="agenda-grid-cell">${profissionalHtml}${incomplete ? ' <span class="badge-warn">Incompleto</span>' : ""}</div>
-        `;
-      }).join("")
-      : "";
+      const hasAnyValue = !!(terapia || diaSemana || profissional);
+      if (!hasAnyValue) {
+        continue;
+      }
+
+      const incomplete = !terapia || !diaSemana || !profissional;
+
+      const terapiaHtml = terapia
+        ? terapia
+        : '<span class="muted">Não informado</span>';
+      const diaHtml = diaSemana
+        ? formatDiaSemanaLabel(diaSemana)
+        : '<span class="muted">Não informado</span>';
+      const profissionalHtml = profissional
+        ? profissional
+        : '<span class="muted">Não informado</span>';
+
+      agendaRowBlocks.push(`
+        <div class="agenda-grid-cell">${terapiaHtml}</div>
+        <div class="agenda-grid-cell">${diaHtml}</div>
+        <div class="agenda-grid-cell">${profissionalHtml}${incomplete ? ' <span class="badge-warn">Incompleto</span>' : ''}</div>
+      `);
+    }
+
+    const hasAgendaData = agendaRowBlocks.length > 0;
+    const agendaRows = hasAgendaData ? agendaRowBlocks.join("") : "";
 
     const agendaSection = `
       <section class="ficha-section">
