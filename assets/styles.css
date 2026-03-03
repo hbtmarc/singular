@@ -614,6 +614,10 @@ body:not(.auth-mode) #auth-root {
   min-width: 900px;
 }
 
+.professionals-table {
+  min-width: 1220px;
+}
+
 .patients-preview-list {
   margin: 6px 0 0;
   padding-left: 18px;

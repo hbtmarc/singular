@@ -1,0 +1,3 @@
+nomeCompleto,cpf,especialidade,numeroConselho,telefone,email,repasseTipo,repasseValor,cnpjVinculado,contratoTipo,repassePagamento.tipo,repassePagamento.pixChave,repassePagamento.bancoNome,repassePagamento.agencia,repassePagamento.conta,repassePagamento.status,ativo
+"Ana Flávia Silva","12345678901","Psicologia","CRP 06/12345","(11) 98888-7777","ana.silva@clinica.com","Percentual","30","12345678000199","PJ","PIX","ana@pix.com","","","","Ativo","true"
+"Bruno Rocha","","Fonoaudiologia","CREFONO 2-54321","11977776666","bruno@clinica.com","Fixo","2500,00","","CLT","Banco","","Banco do Brasil","1234","98765-0","Pendente","true"

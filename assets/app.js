@@ -1,6 +1,6 @@
 import { initFirebase, onUserChanged, logout, readUserProfile, watchUserProfile } from "./firebase.js";
 
-const APP_BUNDLE_VERSION = "20260301-6";
+const APP_BUNDLE_VERSION = "20260301-12";
 const appBundleVersionFromUrl = new URL(import.meta.url).searchParams.get("v");
 const ASSET_VERSION = String(appBundleVersionFromUrl || APP_BUNDLE_VERSION).trim() || APP_BUNDLE_VERSION;
 
@@ -126,7 +126,7 @@ function getAllowedRoutes() {
   }
 
   if (role === "profissional") {
-    return new Set(["#/dashboard", "#/atendimentos", "#/configuracoes"]);
+    return new Set(["#/dashboard", "#/profissionais", "#/atendimentos", "#/configuracoes"]);
   }
 
   return new Set(["#/dashboard", "#/configuracoes"]);
