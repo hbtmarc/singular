@@ -39,6 +39,11 @@ let secondaryApp = null;
 let secondaryAuth = null;
 
 const ALLOWED_ROLES = ["admin", "gerente", "administrativo", "profissional"];
+const BACKUP_BASE_PATHS = ["users", "emailIndex", "patients", "professionals", "services", "appointments", "finance"];
+const BACKUP_PERMISSION_MESSAGE = "Permissão negada nas Rules do RTDB para /backups";
+const NAVIGATION_DEDUPE_MS = 10000;
+
+const routeLogCache = new Map();
 
 function getOrCreateApp() {
   const apps = getApps();
@@ -140,6 +145,162 @@ async function updateWithFallbackPatches(reference, patches) {
 export function encodeEmailKey(email) {
   const normalized = normalizeEmail(email);
   return normalized.replaceAll(".", ",");
+}
+
+export function safeCount(obj) {
+  if (!obj || typeof obj !== "object") {
+    return 0;
+  }
+
+  return Object.keys(obj).filter((key) => !String(key).startsWith("__")).length;
+}
+
+function resolveBackupErrorMessage(error, fallbackMessage) {
+  if (isPermissionDeniedError(error)) {
+    return BACKUP_PERMISSION_MESSAGE;
+  }
+
+  return error?.message || fallbackMessage;
+}
+
+function buildAuditPayload(input) {
+  return {
+    ts: Date.now(),
+    tipo: String(input?.tipo || "sistema").trim() || "sistema",
+    acao: String(input?.acao || "acao").trim() || "acao",
+    resumo: String(input?.resumo || "").trim(),
+    meta: input?.meta && typeof input.meta === "object" ? input.meta : {}
+  };
+}
+
+async function writeAuditLogForUid(uid, input) {
+  const normalizedUid = String(uid || "").trim();
+  if (!normalizedUid) {
+    return {
+      ok: false,
+      message: "UID não informado para auditoria."
+    };
+  }
+
+  try {
+    const database = getDatabaseInstance();
+    const logRef = push(dbRef(database, `auditLogs/${normalizedUid}`));
+    await set(logRef, buildAuditPayload(input));
+
+    return {
+      ok: true,
+      message: "Log registrado com sucesso.",
+      logId: logRef.key || ""
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error?.message || "Não foi possível registrar log de auditoria.",
+      code: String(error?.code || "")
+    };
+  }
+}
+
+export async function logActivity(input, options = {}) {
+  const auth = getAuthInstance();
+  const uid = String(options?.uid || auth?.currentUser?.uid || "").trim();
+  if (!uid) {
+    return {
+      ok: false,
+      message: "Sem usuário autenticado para registrar auditoria."
+    };
+  }
+
+  return writeAuditLogForUid(uid, input);
+}
+
+export async function listUserAuditLogs(uid, limit = 50) {
+  const normalizedUid = String(uid || "").trim();
+  if (!normalizedUid) {
+    return {
+      ok: false,
+      logs: [],
+      message: "UID não informado para listar logs."
+    };
+  }
+
+  try {
+    const database = getDatabaseInstance();
+    const snapshot = await get(dbRef(database, `auditLogs/${normalizedUid}`));
+    if (!snapshot.exists()) {
+      return {
+        ok: true,
+        logs: [],
+        message: "Nenhum log encontrado para este usuário."
+      };
+    }
+
+    const raw = snapshot.val();
+    const list = Object.keys(raw || {}).map((logId) => {
+      const item = raw[logId] || {};
+      return {
+        id: logId,
+        ts: Number.isFinite(Number(item.ts)) ? Number(item.ts) : 0,
+        tipo: String(item.tipo || "sistema"),
+        acao: String(item.acao || "acao"),
+        resumo: String(item.resumo || ""),
+        meta: item.meta && typeof item.meta === "object" ? item.meta : {}
+      };
+    });
+
+    const limited = list
+      .sort((a, b) => b.ts - a.ts)
+      .slice(0, Math.max(1, Number(limit) || 50));
+
+    return {
+      ok: true,
+      logs: limited,
+      message: "Logs carregados com sucesso."
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      logs: [],
+      message: error?.message || "Não foi possível carregar logs de auditoria.",
+      code: String(error?.code || "")
+    };
+  }
+}
+
+export async function logRouteNavigation(routeInfo = {}) {
+  const auth = getAuthInstance();
+  const uid = String(auth?.currentUser?.uid || "").trim();
+  if (!uid) {
+    return {
+      ok: false,
+      message: "Usuário não autenticado para log de navegação."
+    };
+  }
+
+  const route = String(routeInfo?.route || "").trim() || "#";
+  const title = String(routeInfo?.title || "").trim();
+  const cacheKey = `${uid}:${route}`;
+  const now = Date.now();
+  const lastTs = routeLogCache.get(cacheKey) || 0;
+
+  if (now - lastTs < NAVIGATION_DEDUPE_MS) {
+    return {
+      ok: true,
+      deduped: true,
+      message: "Navegação deduplicada."
+    };
+  }
+
+  routeLogCache.set(cacheKey, now);
+  return logActivity({
+    tipo: "navegacao",
+    acao: "rota",
+    resumo: title ? `Acessou ${title}` : `Acessou ${route}`,
+    meta: {
+      route,
+      title
+    }
+  });
 }
 
 export async function initFirebase() {
@@ -253,12 +414,362 @@ export function onUserChanged(callback) {
 
 export async function loginWithEmailPassword(email, password) {
   const auth = getAuthInstance();
-  return signInWithEmailAndPassword(auth, email, password);
+  const credential = await signInWithEmailAndPassword(auth, email, password);
+
+  try {
+    await writeAuditLogForUid(credential?.user?.uid, {
+      tipo: "auth",
+      acao: "login",
+      resumo: "Login realizado",
+      meta: {
+        email: normalizeEmail(credential?.user?.email || email)
+      }
+    });
+  } catch (error) {
+    console.warn("Falha ao registrar log de login:", error);
+  }
+
+  return credential;
 }
 
 export async function logout() {
   const auth = getAuthInstance();
+  const uid = String(auth?.currentUser?.uid || "").trim();
+  const email = normalizeEmail(auth?.currentUser?.email || "");
+
+  if (uid) {
+    try {
+      await writeAuditLogForUid(uid, {
+        tipo: "auth",
+        acao: "logout",
+        resumo: "Logout realizado",
+        meta: { email }
+      });
+    } catch (error) {
+      console.warn("Falha ao registrar log de logout:", error);
+    }
+  }
+
   return signOut(auth);
+}
+
+export async function createBackup(options = {}) {
+  const note = String(options?.note || "").trim();
+  const includeLogs = options?.includeLogs === true;
+
+  try {
+    const database = getDatabaseInstance();
+    const auth = getAuthInstance();
+    const currentUser = auth?.currentUser || null;
+    const createdByUid = String(currentUser?.uid || "").trim();
+    const createdByEmail = normalizeEmail(currentUser?.email || "");
+
+    const metaRef = push(dbRef(database, "backupsMeta"));
+    const backupId = String(metaRef.key || "").trim();
+
+    if (!backupId) {
+      return {
+        ok: false,
+        backupId: "",
+        message: "Não foi possível gerar ID do backup."
+      };
+    }
+
+    const paths = includeLogs ? [...BACKUP_BASE_PATHS, "auditLogs"] : [...BACKUP_BASE_PATHS];
+    const snapshots = {};
+
+    for (let index = 0; index < paths.length; index += 1) {
+      const path = paths[index];
+      const snap = await get(dbRef(database, path));
+      snapshots[path] = snap.exists() ? snap.val() : null;
+    }
+
+    const counts = {
+      patients: safeCount(snapshots.patients),
+      professionals: safeCount(snapshots.professionals),
+      services: safeCount(snapshots.services),
+      appointments: safeCount(snapshots.appointments),
+      finance: safeCount(snapshots.finance)
+    };
+
+    const meta = {
+      ts: Date.now(),
+      createdByUid,
+      createdByEmail,
+      note,
+      counts,
+      includeLogs
+    };
+
+    await set(dbRef(database, `backupsMeta/${backupId}`), meta);
+
+    for (let index = 0; index < paths.length; index += 1) {
+      const path = paths[index];
+      await set(dbRef(database, `backups/${backupId}/data/${path}`), snapshots[path]);
+    }
+
+    await logActivity({
+      tipo: "backup",
+      acao: "criar",
+      resumo: `Backup ${backupId} criado`,
+      meta: {
+        backupId,
+        includeLogs,
+        counts
+      }
+    });
+
+    return {
+      ok: true,
+      backupId,
+      meta,
+      message: "Backup criado com sucesso."
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      backupId: "",
+      message: resolveBackupErrorMessage(error, "Não foi possível criar o backup."),
+      code: String(error?.code || ""),
+      errorMessage: String(error?.message || "")
+    };
+  }
+}
+
+export async function listBackups(limit = 20) {
+  try {
+    const database = getDatabaseInstance();
+    const snapshot = await get(dbRef(database, "backupsMeta"));
+    if (!snapshot.exists()) {
+      return {
+        ok: true,
+        backups: [],
+        message: "Nenhum backup encontrado."
+      };
+    }
+
+    const raw = snapshot.val();
+    const list = Object.keys(raw || {}).map((backupId) => {
+      const item = raw[backupId] || {};
+      return {
+        backupId,
+        ts: Number.isFinite(Number(item.ts)) ? Number(item.ts) : 0,
+        createdByUid: String(item.createdByUid || ""),
+        createdByEmail: String(item.createdByEmail || ""),
+        note: String(item.note || ""),
+        counts: item.counts && typeof item.counts === "object" ? item.counts : {
+          patients: 0,
+          professionals: 0,
+          services: 0,
+          appointments: 0,
+          finance: 0
+        },
+        includeLogs: item.includeLogs === true
+      };
+    });
+
+    const sorted = list
+      .sort((a, b) => b.ts - a.ts)
+      .slice(0, Math.max(1, Number(limit) || 20));
+
+    return {
+      ok: true,
+      backups: sorted,
+      message: "Backups carregados com sucesso."
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      backups: [],
+      message: resolveBackupErrorMessage(error, "Não foi possível listar backups."),
+      code: String(error?.code || ""),
+      errorMessage: String(error?.message || "")
+    };
+  }
+}
+
+export async function restoreBackup(backupId) {
+  const normalizedBackupId = String(backupId || "").trim();
+  if (!normalizedBackupId) {
+    return {
+      ok: false,
+      message: "Backup não informado para restauração."
+    };
+  }
+
+  const autoBackupResult = await createBackup({
+    note: "auto-before-restore",
+    includeLogs: false
+  });
+
+  if (!autoBackupResult.ok) {
+    return {
+      ok: false,
+      message: `Falha no backup automático antes da restauração: ${autoBackupResult.message}`,
+      code: autoBackupResult.code || "",
+      errorMessage: autoBackupResult.errorMessage || ""
+    };
+  }
+
+  try {
+    const database = getDatabaseInstance();
+    const auth = getAuthInstance();
+    const currentUid = String(auth?.currentUser?.uid || "").trim();
+    const currentEmail = normalizeEmail(auth?.currentUser?.email || "");
+    const currentEmailKey = encodeEmailKey(currentEmail);
+
+    const [backupSnap, currentUserSnap, currentEmailIndexSnap] = await Promise.all([
+      get(dbRef(database, `backups/${normalizedBackupId}/data`)),
+      currentUid ? get(dbRef(database, `users/${currentUid}`)) : Promise.resolve({ exists: () => false, val: () => null }),
+      currentEmail ? get(dbRef(database, `emailIndex/${currentEmailKey}`)) : Promise.resolve({ exists: () => false, val: () => null })
+    ]);
+
+    if (!backupSnap.exists()) {
+      return {
+        ok: false,
+        message: "Backup não encontrado para restauração.",
+        autoBackupId: autoBackupResult.backupId
+      };
+    }
+
+    const backupData = backupSnap.val() || {};
+    const restorePaths = [...BACKUP_BASE_PATHS];
+    if (Object.prototype.hasOwnProperty.call(backupData, "auditLogs")) {
+      restorePaths.push("auditLogs");
+    }
+
+    for (let index = 0; index < restorePaths.length; index += 1) {
+      const path = restorePaths[index];
+      const value = Object.prototype.hasOwnProperty.call(backupData, path) ? backupData[path] : null;
+      await set(dbRef(database, path), value);
+    }
+
+    if (currentUid && currentUserSnap.exists()) {
+      await set(dbRef(database, `users/${currentUid}`), currentUserSnap.val());
+
+      if (currentEmail) {
+        const emailIndexValue = currentEmailIndexSnap.exists()
+          ? currentEmailIndexSnap.val()
+          : {
+              uid: currentUid,
+              email: currentEmail,
+              updatedAt: Date.now()
+            };
+
+        await set(dbRef(database, `emailIndex/${currentEmailKey}`), emailIndexValue);
+      }
+    }
+
+    await logActivity({
+      tipo: "backup",
+      acao: "restaurar",
+      resumo: `Backup ${normalizedBackupId} restaurado`,
+      meta: {
+        backupId: normalizedBackupId,
+        autoBackupId: autoBackupResult.backupId,
+        restoredPaths: restorePaths
+      }
+    });
+
+    return {
+      ok: true,
+      message: "Restauração concluída com sucesso.",
+      backupId: normalizedBackupId,
+      autoBackupId: autoBackupResult.backupId,
+      restoredPaths: restorePaths
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: resolveBackupErrorMessage(error, "Não foi possível restaurar o backup."),
+      code: String(error?.code || ""),
+      errorMessage: String(error?.message || ""),
+      autoBackupId: autoBackupResult.backupId
+    };
+  }
+}
+
+export async function deleteBackup(backupId) {
+  const normalizedBackupId = String(backupId || "").trim();
+  if (!normalizedBackupId) {
+    return {
+      ok: false,
+      message: "Backup não informado para exclusão."
+    };
+  }
+
+  try {
+    const listed = await listBackups(200);
+    if (!listed.ok) {
+      return {
+        ok: false,
+        message: listed.message || "Não foi possível validar backups antes da exclusão.",
+        code: listed.code || "",
+        errorMessage: listed.errorMessage || ""
+      };
+    }
+
+    const backups = listed.backups || [];
+    const targetExists = backups.some((item) => item.backupId === normalizedBackupId);
+    if (!targetExists) {
+      return {
+        ok: false,
+        message: "Backup informado não foi encontrado."
+      };
+    }
+
+    let autoBackupId = "";
+    const latestBackupId = backups.length ? backups[0].backupId : "";
+    const isLatestOrOnly = backups.length <= 1 || latestBackupId === normalizedBackupId;
+
+    if (isLatestOrOnly) {
+      const autoBackup = await createBackup({
+        note: "auto-before-delete",
+        includeLogs: false
+      });
+
+      if (!autoBackup.ok) {
+        return {
+          ok: false,
+          message: `Falha no backup automático antes da exclusão: ${autoBackup.message}`,
+          code: autoBackup.code || "",
+          errorMessage: autoBackup.errorMessage || ""
+        };
+      }
+
+      autoBackupId = autoBackup.backupId || "";
+    }
+
+    const database = getDatabaseInstance();
+    await set(dbRef(database, `backupsMeta/${normalizedBackupId}`), null);
+    await set(dbRef(database, `backups/${normalizedBackupId}`), null);
+
+    await logActivity({
+      tipo: "backup",
+      acao: "excluir",
+      resumo: `Backup ${normalizedBackupId} excluído`,
+      meta: {
+        backupId: normalizedBackupId,
+        autoBackupId
+      }
+    });
+
+    return {
+      ok: true,
+      message: autoBackupId
+        ? `Backup excluído com sucesso. Backup automático criado: ${autoBackupId}.`
+        : "Backup excluído com sucesso.",
+      backupId: normalizedBackupId,
+      autoBackupId
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: resolveBackupErrorMessage(error, "Não foi possível excluir o backup."),
+      code: String(error?.code || ""),
+      errorMessage: String(error?.message || "")
+    };
+  }
 }
 
 export async function getUserProfileByUid(uid) {
@@ -441,6 +952,17 @@ export async function upsertUserProfile(uid, profile) {
       updatedAt: Date.now()
     });
 
+    await logActivity({
+      tipo: "admin",
+      acao: "alterar-acesso",
+      resumo: `Perfil de acesso atualizado para ${email}`,
+      meta: {
+        targetUid: uid,
+        role,
+        ativo
+      }
+    });
+
     return {
       ok: true,
       message: "Perfil salvo com sucesso."
@@ -499,6 +1021,16 @@ export async function softDeleteUserProfile(uid) {
     const appliedPatch = updateResult.patch || fallbackAttempts[fallbackAttempts.length - 1];
 
     const usedCompatibilityPatch = !Object.prototype.hasOwnProperty.call(appliedPatch, "deletedAt");
+
+    await logActivity({
+      tipo: "admin",
+      acao: "excluir-usuario",
+      resumo: `Usuário ${normalizedUid} excluído do projeto`,
+      meta: {
+        targetUid: normalizedUid,
+        ativo: false
+      }
+    });
 
     return {
       ok: true,
@@ -567,6 +1099,16 @@ export async function restoreUserProfile(uid) {
 
     const usedCompatibilityPatch = !Object.prototype.hasOwnProperty.call(appliedPatch, "deletedAt");
 
+    await logActivity({
+      tipo: "admin",
+      acao: "restaurar-usuario",
+      resumo: `Usuário ${normalizedUid} restaurado no projeto`,
+      meta: {
+        targetUid: normalizedUid,
+        ativo: true
+      }
+    });
+
     return {
       ok: true,
       message: usedCompatibilityPatch
@@ -620,6 +1162,16 @@ export async function removeUserFromProject(uid) {
     }
 
     await set(dbRef(database, `users/${normalizedUid}`), null);
+
+    await logActivity({
+      tipo: "admin",
+      acao: "remover-usuario",
+      resumo: `Usuário ${normalizedUid} removido do projeto`,
+      meta: {
+        targetUid: normalizedUid,
+        email: profile?.email || ""
+      }
+    });
 
     return {
       ok: true,
@@ -1108,6 +1660,16 @@ export async function createPatient(patientId, payload) {
   try {
     const database = getDatabaseInstance();
     await set(dbRef(database, `patients/${id}`), normalized);
+
+    await logActivity({
+      tipo: "pacientes",
+      acao: "criar",
+      resumo: `Paciente criado (${id})`,
+      meta: {
+        patientId: id
+      }
+    });
+
     return {
       ok: true,
       message: "Paciente cadastrado com sucesso."
@@ -1161,6 +1723,15 @@ export async function updatePatient(patientId, patch) {
           : normalized.createdAt
     });
 
+    await logActivity({
+      tipo: "pacientes",
+      acao: "atualizar",
+      resumo: `Paciente atualizado (${id})`,
+      meta: {
+        patientId: id
+      }
+    });
+
     return {
       ok: true,
       message: "Paciente atualizado com sucesso."
@@ -1188,6 +1759,16 @@ export async function setPatientActive(patientId, active) {
       [`patients/${id}/ativo`]: active === true,
       [`patients/${id}/core/ativo`]: active === true,
       [`patients/${id}/updatedAt`]: Date.now()
+    });
+
+    await logActivity({
+      tipo: "pacientes",
+      acao: "alternar-status",
+      resumo: `Paciente ${id} ${active === true ? "ativado" : "inativado"}`,
+      meta: {
+        patientId: id,
+        ativo: active === true
+      }
     });
 
     return {
@@ -1384,6 +1965,15 @@ export async function createProfessional(payload) {
 
     await set(dbRef(database, `professionals/${professionalId}`), merged);
 
+    await logActivity({
+      tipo: "profissionais",
+      acao: "criar",
+      resumo: `Profissional criado (${professionalId})`,
+      meta: {
+        professionalId
+      }
+    });
+
     return {
       ok: true,
       message: "Profissional salvo com sucesso.",
@@ -1442,6 +2032,15 @@ export async function updateProfessional(professionalId, patch) {
 
     await set(dbRef(database, `professionals/${id}`), normalized);
 
+    await logActivity({
+      tipo: "profissionais",
+      acao: "atualizar",
+      resumo: `Profissional atualizado (${id})`,
+      meta: {
+        professionalId: id
+      }
+    });
+
     return {
       ok: true,
       message: "Profissional atualizado com sucesso.",
@@ -1469,6 +2068,16 @@ export async function setProfessionalActive(professionalId, active) {
     await update(dbRef(database), {
       [`professionals/${id}/ativo`]: active === true,
       [`professionals/${id}/updatedAt`]: Date.now()
+    });
+
+    await logActivity({
+      tipo: "profissionais",
+      acao: "alternar-status",
+      resumo: `Profissional ${id} ${active === true ? "ativado" : "inativado"}`,
+      meta: {
+        professionalId: id,
+        ativo: active === true
+      }
     });
 
     return {

@@ -1,6 +1,6 @@
-import { initFirebase, onUserChanged, logout, readUserProfile, watchUserProfile } from "./firebase.js";
+import { initFirebase, onUserChanged, logout, readUserProfile, watchUserProfile, logRouteNavigation } from "./firebase.js";
 
-const APP_BUNDLE_VERSION = "20260303-13";
+const APP_BUNDLE_VERSION = "20260304-14";
 const appBundleVersionFromUrl = new URL(import.meta.url).searchParams.get("v");
 const ASSET_VERSION = String(appBundleVersionFromUrl || APP_BUNDLE_VERSION).trim() || APP_BUNDLE_VERSION;
 
@@ -367,6 +367,11 @@ async function renderRoute() {
   try {
     const pageModule = await import(withAssetVersion(route.modulePath));
     pageModule.render(contentElement);
+
+    logRouteNavigation({
+      route: hash,
+      title: route.title
+    }).catch(() => {});
 
     const profileWarning = getProfileWarningMessage();
     const message = consumeTransientMessage() || profileWarning;

@@ -9,7 +9,12 @@ import {
   removeEmailIndex,
   softDeleteUserProfile,
   restoreUserProfile,
-  removeUserFromProject
+  removeUserFromProject,
+  createBackup,
+  listBackups,
+  restoreBackup,
+  deleteBackup,
+  listUserAuditLogs
 } from "../firebase.js";
 
 import {
@@ -40,12 +45,34 @@ function generateTempPassword(length = 14) {
   window.crypto.getRandomValues(values);
 
   let password = "";
-
   for (let index = 0; index < values.length; index += 1) {
     password += charset[values[index] % charset.length];
   }
 
   return password;
+}
+
+function roleOptionsHtml(selectedRole) {
+  return ROLE_OPTIONS.map((role) => {
+    const selected = role === selectedRole ? "selected" : "";
+    return `<option value="${role}" ${selected}>${role}</option>`;
+  }).join("");
+}
+
+function buildErrorMessage(result, fallback) {
+  const base = String(result?.message || fallback || "Erro inesperado.").trim();
+  const code = String(result?.code || result?.errorCode || "").trim();
+  const details = String(result?.errorMessage || "").trim();
+
+  const suffix = [];
+  if (code) {
+    suffix.push(`code=${code}`);
+  }
+  if (details) {
+    suffix.push(`details=${details}`);
+  }
+
+  return suffix.length ? `${base} (${suffix.join(" • ")})` : base;
 }
 
 async function copyText(text) {
@@ -67,13 +94,6 @@ async function copyText(text) {
   }
 }
 
-function roleOptionsHtml(selectedRole) {
-  return ROLE_OPTIONS.map((role) => {
-    const selected = role === selectedRole ? "selected" : "";
-    return `<option value="${role}" ${selected}>${role}</option>`;
-  }).join("");
-}
-
 export function render(container) {
   const isAdmin = window.__userProfile?.role === "admin";
 
@@ -89,9 +109,13 @@ export function render(container) {
     return;
   }
 
+  const RESTORE_PATHS = ["users", "emailIndex", "patients", "professionals", "services", "appointments", "finance"];
+
   let usersMap = {};
+  let backupsList = [];
   let editingUid = "";
   let editingOriginalEmail = "";
+  let restoreTargetBackupId = "";
 
   container.innerHTML = `
     <section class="admin-page">
@@ -170,6 +194,39 @@ export function render(container) {
           <p id="adm-lista-feedback" class="admin-feedback"></p>
         </div>
       </article>
+
+      <article class="card">
+        <h2>Backups do banco</h2>
+        <p class="admin-card-text">Crie snapshots internos no RTDB e restaure quando necessário.</p>
+
+        <div class="admin-card-body">
+          <label class="admin-label" for="adm-backup-note">Observação (opcional)</label>
+          <input id="adm-backup-note" class="admin-input" type="text" placeholder="Ex.: antes de ajuste de permissões" />
+          <div class="admin-inline-actions">
+            <button id="adm-backup-create" type="button" class="admin-btn admin-btn-primary">Criar backup agora</button>
+            <button id="adm-backup-refresh" type="button" class="admin-btn admin-btn-secondary">Atualizar lista</button>
+          </div>
+
+          <div id="adm-backup-list" class="admin-result-box admin-backup-list">Carregando backups...</div>
+          <p id="adm-backup-feedback" class="admin-feedback"></p>
+        </div>
+      </article>
+
+      <article class="card">
+        <h2>Logs de atividade</h2>
+        <p class="admin-card-text">Visualize os últimos eventos registrados por usuário.</p>
+
+        <div class="admin-card-body">
+          <label class="admin-label" for="adm-log-user">Usuário</label>
+          <div class="admin-inline-actions">
+            <select id="adm-log-user" class="admin-input"></select>
+            <button id="adm-log-refresh" type="button" class="admin-btn admin-btn-secondary">Atualizar logs</button>
+          </div>
+
+          <div id="adm-log-list" class="admin-result-box admin-log-list">Selecione um usuário para carregar os logs.</div>
+          <p id="adm-log-feedback" class="admin-feedback"></p>
+        </div>
+      </article>
     </section>
 
     <div id="adm-edit-modal" class="admin-modal-overlay" aria-hidden="true">
@@ -203,6 +260,30 @@ export function render(container) {
         </div>
       </div>
     </div>
+
+    <div id="adm-backup-restore-modal" class="admin-modal-overlay" aria-hidden="true">
+      <div class="admin-modal" role="dialog" aria-modal="true" aria-labelledby="adm-backup-restore-title">
+        <button id="adm-backup-restore-close" type="button" class="admin-modal-close" aria-label="Fechar">×</button>
+        <h2 id="adm-backup-restore-title">Confirmar restauração</h2>
+
+        <div class="admin-card-body admin-modal-body">
+          <p class="admin-warning-box">A restauração substitui os dados atuais pelos dados do backup selecionado.</p>
+          <p id="adm-backup-restore-desc" class="admin-card-text"></p>
+
+          <div>
+            <strong>Caminhos restaurados:</strong>
+            <ul id="adm-backup-restore-paths" class="admin-restore-paths"></ul>
+          </div>
+
+          <p id="adm-backup-restore-feedback" class="admin-feedback"></p>
+
+          <div class="admin-modal-actions">
+            <button id="adm-backup-restore-cancel" type="button" class="admin-btn admin-btn-secondary">Cancelar</button>
+            <button id="adm-backup-restore-confirm" type="button" class="admin-btn admin-btn-primary">Restaurar agora</button>
+          </div>
+        </div>
+      </div>
+    </div>
   `;
 
   const buscaEmailInput = container.querySelector("#adm-busca-email");
@@ -216,6 +297,17 @@ export function render(container) {
   const criarButton = container.querySelector("#adm-criar");
   const redefinirButton = container.querySelector("#adm-redefinir");
   const criarFeedback = container.querySelector("#adm-criar-feedback");
+
+  const backupNoteInput = container.querySelector("#adm-backup-note");
+  const backupCreateButton = container.querySelector("#adm-backup-create");
+  const backupRefreshButton = container.querySelector("#adm-backup-refresh");
+  const backupListBox = container.querySelector("#adm-backup-list");
+  const backupFeedback = container.querySelector("#adm-backup-feedback");
+
+  const logUserSelect = container.querySelector("#adm-log-user");
+  const logRefreshButton = container.querySelector("#adm-log-refresh");
+  const logListBox = container.querySelector("#adm-log-list");
+  const logFeedback = container.querySelector("#adm-log-feedback");
 
   const filtroInput = container.querySelector("#adm-filtro-email");
   const listaBody = container.querySelector("#adm-lista-body");
@@ -231,6 +323,14 @@ export function render(container) {
   const salvarButton = container.querySelector("#adm-salvar");
   const editarFeedback = container.querySelector("#adm-editar-feedback");
 
+  const restoreModal = container.querySelector("#adm-backup-restore-modal");
+  const restoreCloseButton = container.querySelector("#adm-backup-restore-close");
+  const restoreCancelButton = container.querySelector("#adm-backup-restore-cancel");
+  const restoreConfirmButton = container.querySelector("#adm-backup-restore-confirm");
+  const restoreDesc = container.querySelector("#adm-backup-restore-desc");
+  const restorePathsList = container.querySelector("#adm-backup-restore-paths");
+  const restoreFeedback = container.querySelector("#adm-backup-restore-feedback");
+
   function setFeedback(element, message, type = "info") {
     const colors = {
       info: "#6b7280",
@@ -242,7 +342,7 @@ export function render(container) {
     element.textContent = message;
   }
 
-  function openModal() {
+  function openEditModal() {
     modalOverlay.classList.add("open");
     modalOverlay.setAttribute("aria-hidden", "false");
     document.body.style.overflow = "hidden";
@@ -251,11 +351,36 @@ export function render(container) {
     }, 0);
   }
 
-  function closeModal() {
+  function closeEditModal() {
     modalOverlay.classList.remove("open");
     modalOverlay.setAttribute("aria-hidden", "true");
     document.body.style.overflow = "";
     editarFeedback.textContent = "";
+  }
+
+  function openRestoreModal(backup) {
+    if (!backup) {
+      return;
+    }
+
+    restoreTargetBackupId = backup.backupId;
+    const restorePaths = backup.includeLogs ? [...RESTORE_PATHS, "auditLogs"] : [...RESTORE_PATHS];
+
+    restoreDesc.textContent = `${backupDisplayName(backup)} • ${formatDateTime(backup.ts)} • criado por ${backup.createdByEmail || "não informado"}`;
+    restorePathsList.innerHTML = restorePaths.map((path) => `<li>${path}</li>`).join("");
+    restoreFeedback.textContent = "";
+
+    restoreModal.classList.add("open");
+    restoreModal.setAttribute("aria-hidden", "false");
+    document.body.style.overflow = "hidden";
+  }
+
+  function closeRestoreModal() {
+    restoreModal.classList.remove("open");
+    restoreModal.setAttribute("aria-hidden", "true");
+    document.body.style.overflow = "";
+    restoreTargetBackupId = "";
+    restoreFeedback.textContent = "";
   }
 
   function setBuscaResultado(profile, uid) {
@@ -287,7 +412,7 @@ export function render(container) {
     editarRoleSelect.value = profile?.role || "profissional";
     editarAtivoToggle.checked = !!profile?.ativo;
 
-    openModal();
+    openEditModal();
   }
 
   function renderUserTable() {
@@ -318,9 +443,7 @@ export function render(container) {
     listaBody.innerHTML = rows
       .map(([uid, profile]) => {
         const isDeleted = typeof profile.deletedAt === "number" && profile.deletedAt > 0;
-        const statusText = isDeleted
-          ? "Excluído do projeto"
-          : (profile.ativo ? "Ativo" : "Inativo");
+        const statusText = isDeleted ? "Excluído do projeto" : (profile.ativo ? "Ativo" : "Inativo");
         const statusClass = isDeleted ? "status-deleted" : (profile.ativo ? "status-active" : "status-inactive");
 
         const restoreButton = isDeleted
@@ -348,6 +471,107 @@ export function render(container) {
       .join("");
   }
 
+  function formatBackupCounts(counts) {
+    const safe = counts && typeof counts === "object" ? counts : {};
+    return `P:${Number(safe.patients || 0)} • Prof:${Number(safe.professionals || 0)} • Serv:${Number(safe.services || 0)} • Atend:${Number(safe.appointments || 0)} • Fin:${Number(safe.finance || 0)}`;
+  }
+
+  function backupDisplayName(backup) {
+    const note = String(backup?.note || "").trim();
+    return note || "Backup sem observação";
+  }
+
+  function renderBackupsList() {
+    if (!backupsList.length) {
+      backupListBox.innerHTML = "Nenhum backup encontrado.";
+      return;
+    }
+
+    backupListBox.innerHTML = backupsList.map((backup, index) => {
+      const isOnly = backupsList.length === 1;
+      const isLatest = index === 0;
+      const deleteHint = (isOnly || isLatest)
+        ? "Ao excluir este backup, um backup automático será criado antes."
+        : "";
+
+      return `
+        <div class="admin-backup-item" data-backup-id="${backup.backupId}">
+          <div class="admin-backup-main">
+            <strong>${backupDisplayName(backup)}</strong>
+            <span>${formatDateTime(backup.ts)}</span>
+            <span>${backup.createdByEmail || "não informado"}</span>
+          </div>
+          <div class="admin-backup-meta">
+            <span>${formatBackupCounts(backup.counts)}</span>
+            <span>Inclui logs</span>
+          </div>
+          ${deleteHint ? `<div class="admin-backup-hint">${deleteHint}</div>` : ""}
+          <div class="admin-inline-actions">
+            <button type="button" class="admin-btn admin-btn-secondary" data-backup-action="restaurar" data-backup-id="${backup.backupId}">Restaurar</button>
+            <button type="button" class="admin-btn admin-btn-secondary" data-backup-action="excluir" data-backup-id="${backup.backupId}">Excluir</button>
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  function renderLogUsersOptions() {
+    const entries = Object.entries(usersMap)
+      .sort((a, b) => String(a[1]?.email || "").localeCompare(String(b[1]?.email || "")));
+
+    const currentUid = String(window.__currentUser?.uid || "").trim();
+    const options = [];
+
+    if (currentUid && usersMap[currentUid]) {
+      options.push(`<option value="${currentUid}">Atual (${usersMap[currentUid].email || currentUid})</option>`);
+    }
+
+    entries.forEach(([uid, profile]) => {
+      if (uid === currentUid) {
+        return;
+      }
+      options.push(`<option value="${uid}">${profile.email || uid}</option>`);
+    });
+
+    logUserSelect.innerHTML = options.length ? options.join("") : "<option value=''>Sem usuários</option>";
+  }
+
+  function renderLogs(logs) {
+    if (!logs.length) {
+      logListBox.innerHTML = "Nenhum log encontrado para este usuário.";
+      return;
+    }
+
+    logListBox.innerHTML = logs.map((item) => {
+      const meta = item.meta && Object.keys(item.meta).length
+        ? JSON.stringify(item.meta)
+        : "{}";
+
+      return `
+        <div class="admin-log-item">
+          <div class="admin-log-row"><strong>${formatDateTime(item.ts)}</strong> • ${item.tipo} • ${item.acao}</div>
+          <div class="admin-log-row">${item.resumo || "Sem resumo"}</div>
+          <div class="admin-log-meta">${meta}</div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  async function loadBackupsAndRender() {
+    backupListBox.innerHTML = "Carregando backups...";
+
+    const result = await listBackups(20);
+    if (!result.ok) {
+      setFeedback(backupFeedback, buildErrorMessage(result, "Não foi possível listar backups."), "error");
+      backupListBox.innerHTML = "Falha ao carregar backups.";
+      return;
+    }
+
+    backupsList = result.backups || [];
+    renderBackupsList();
+    setFeedback(backupFeedback, `${backupsList.length} backup(s) carregado(s).`, "info");
+  }
+
   async function loadUsers() {
     listaBody.innerHTML = `
       <tr>
@@ -368,6 +592,27 @@ export function render(container) {
 
     usersMap = result.profiles || {};
     renderUserTable();
+    renderLogUsersOptions();
+  }
+
+  async function loadSelectedLogs() {
+    const uid = String(logUserSelect.value || "").trim();
+    if (!uid) {
+      logListBox.innerHTML = "Selecione um usuário para carregar os logs.";
+      return;
+    }
+
+    logListBox.innerHTML = "Carregando logs...";
+    const result = await listUserAuditLogs(uid, 60);
+
+    if (!result.ok) {
+      setFeedback(logFeedback, buildErrorMessage(result, "Não foi possível carregar os logs."), "error");
+      logListBox.innerHTML = "Falha ao carregar logs.";
+      return;
+    }
+
+    renderLogs(result.logs || []);
+    setFeedback(logFeedback, `${(result.logs || []).length} log(s) carregado(s).`, "info");
   }
 
   async function handleBuscarUsuario() {
@@ -380,7 +625,6 @@ export function render(container) {
     }
 
     buscaResultado.textContent = "Buscando usuário...";
-
     const uidResult = await getUidByEmail(email);
 
     if (!uidResult.ok) {
@@ -396,7 +640,6 @@ export function render(container) {
     }
 
     const profileResult = await getUserProfileByUid(uidResult.uid);
-
     if (!profileResult.ok || !profileResult.profile) {
       setBuscaResultado(null, "");
       buscaResultado.textContent = "UID encontrado, mas o perfil não está configurado.";
@@ -440,7 +683,6 @@ export function render(container) {
     }
 
     const uid = createResult.uid;
-
     const profileResult = await upsertUserProfile(uid, { email, role, ativo });
     if (!profileResult.ok) {
       criarButton.disabled = false;
@@ -465,7 +707,7 @@ export function render(container) {
     };
 
     renderUserTable();
-
+    renderLogUsersOptions();
     criarButton.disabled = false;
 
     if (!resetResult.ok) {
@@ -496,7 +738,6 @@ export function render(container) {
     setFeedback(editarFeedback, "Salvando alterações...", "info");
 
     const profileResult = await upsertUserProfile(uid, { email, role, ativo });
-
     if (!profileResult.ok) {
       salvarButton.disabled = false;
       setFeedback(editarFeedback, profileResult.message || "Falha ao salvar perfil.", "error");
@@ -515,6 +756,7 @@ export function render(container) {
     }
 
     usersMap[uid] = {
+      ...usersMap[uid],
       email,
       role,
       ativo,
@@ -525,14 +767,125 @@ export function render(container) {
     editingOriginalEmail = email;
 
     renderUserTable();
+    renderLogUsersOptions();
     salvarButton.disabled = false;
-    closeModal();
+    closeEditModal();
     setFeedback(listaFeedback, "Alterações salvas com sucesso.", "success");
+  }
+
+  async function handleCreateBackup() {
+    backupCreateButton.disabled = true;
+    setFeedback(backupFeedback, "Criando backup...", "info");
+
+    const result = await createBackup({
+      note: backupNoteInput.value,
+      includeLogs: true
+    });
+
+    backupCreateButton.disabled = false;
+
+    if (!result.ok) {
+      setFeedback(backupFeedback, buildErrorMessage(result, "Não foi possível criar backup."), "error");
+      return;
+    }
+
+    setFeedback(backupFeedback, "Backup criado com sucesso.", "success");
+    backupNoteInput.value = "";
+    await loadBackupsAndRender();
+  }
+
+  async function handleDeleteBackup(backupId) {
+    const backup = backupsList.find((item) => item.backupId === backupId);
+    if (!backup) {
+      return;
+    }
+
+    const isOnly = backupsList.length === 1;
+    const isLatest = backupsList[0]?.backupId === backupId;
+    const warn = (isOnly || isLatest)
+      ? "Este backup é o mais recente/único. Um backup automático será criado antes da exclusão."
+      : "Deseja excluir este backup?";
+
+    const confirmed = window.confirm(warn);
+    if (!confirmed) {
+      return;
+    }
+
+    setFeedback(backupFeedback, "Excluindo backup...", "info");
+    const result = await deleteBackup(backupId);
+
+    if (!result.ok) {
+      setFeedback(backupFeedback, buildErrorMessage(result, "Não foi possível excluir backup."), "error");
+      return;
+    }
+
+    setFeedback(backupFeedback, result.message || "Backup excluído com sucesso.", "success");
+    await loadBackupsAndRender();
+  }
+
+  async function confirmRestoreBackup() {
+    const backupId = restoreTargetBackupId;
+    if (!backupId) {
+      return;
+    }
+
+    restoreConfirmButton.disabled = true;
+    setFeedback(restoreFeedback, "Restaurando backup... aguarde.", "info");
+
+    const result = await restoreBackup(backupId);
+
+    restoreConfirmButton.disabled = false;
+
+    if (!result.ok) {
+      setFeedback(restoreFeedback, buildErrorMessage(result, "Não foi possível restaurar backup."), "error");
+      return;
+    }
+
+    setFeedback(restoreFeedback, "Restauração concluída com sucesso.", "success");
+    setFeedback(backupFeedback, result.message || "Backup restaurado com sucesso.", "success");
+
+    await loadUsers();
+    await loadBackupsAndRender();
+    await loadSelectedLogs();
+
+    window.setTimeout(() => {
+      closeRestoreModal();
+    }, 500);
   }
 
   buscarButton.addEventListener("click", handleBuscarUsuario);
   criarButton.addEventListener("click", handleCriarUsuario);
   salvarButton.addEventListener("click", handleSalvarEdicao);
+
+  backupCreateButton.addEventListener("click", handleCreateBackup);
+  backupRefreshButton.addEventListener("click", loadBackupsAndRender);
+
+  backupListBox.addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-backup-action][data-backup-id]");
+    if (!button) {
+      return;
+    }
+
+    const action = button.getAttribute("data-backup-action");
+    const backupId = button.getAttribute("data-backup-id") || "";
+    const backup = backupsList.find((item) => item.backupId === backupId);
+
+    if (!backup) {
+      return;
+    }
+
+    if (action === "restaurar") {
+      openRestoreModal(backup);
+      return;
+    }
+
+    if (action === "excluir") {
+      await handleDeleteBackup(backupId);
+    }
+  });
+
+  logRefreshButton.addEventListener("click", loadSelectedLogs);
+  logUserSelect.addEventListener("change", loadSelectedLogs);
 
   redefinirButton.addEventListener("click", async () => {
     const email = normalizeEmail(redefinirButton.dataset.email || criarEmailInput.value);
@@ -555,7 +908,6 @@ export function render(container) {
 
   copiarUidBuscaButton.addEventListener("click", async () => {
     const uid = String(copiarUidBuscaButton.dataset.uid || "").trim();
-
     if (!uid) {
       return;
     }
@@ -570,7 +922,6 @@ export function render(container) {
 
   listaBody.addEventListener("click", async (event) => {
     const actionButton = event.target.closest("button[data-action]");
-
     if (!actionButton) {
       return;
     }
@@ -585,11 +936,7 @@ export function render(container) {
 
     if (action === "copiar") {
       const copied = await copyText(uid);
-      if (copied) {
-        setFeedback(listaFeedback, "UID copiado para a área de transferência.", "success");
-      } else {
-        setFeedback(listaFeedback, "Não foi possível copiar o UID.", "error");
-      }
+      setFeedback(listaFeedback, copied ? "UID copiado para a área de transferência." : "Não foi possível copiar o UID.", copied ? "success" : "error");
       return;
     }
 
@@ -607,7 +954,7 @@ export function render(container) {
 
       const result = await softDeleteUserProfile(uid);
       if (!result.ok) {
-        setFeedback(listaFeedback, result.message || "Não foi possível excluir usuário.", "error");
+        setFeedback(listaFeedback, buildErrorMessage(result, "Não foi possível excluir usuário."), "error");
         return;
       }
 
@@ -625,13 +972,14 @@ export function render(container) {
 
       renderUserTable();
       setFeedback(listaFeedback, result.message || "Usuário excluído do projeto com sucesso.", "success");
+      await loadSelectedLogs();
       return;
     }
 
     if (action === "restaurar") {
       const result = await restoreUserProfile(uid);
       if (!result.ok) {
-        setFeedback(listaFeedback, result.message || "Não foi possível restaurar usuário.", "error");
+        setFeedback(listaFeedback, buildErrorMessage(result, "Não foi possível restaurar usuário."), "error");
         return;
       }
 
@@ -649,6 +997,7 @@ export function render(container) {
 
       renderUserTable();
       setFeedback(listaFeedback, result.message || "Usuário restaurado com sucesso.", "success");
+      await loadSelectedLogs();
       return;
     }
 
@@ -660,31 +1009,51 @@ export function render(container) {
 
       const result = await removeUserFromProject(uid);
       if (!result.ok) {
-        setFeedback(listaFeedback, result.message || "Não foi possível remover usuário do projeto.", "error");
+        setFeedback(listaFeedback, buildErrorMessage(result, "Não foi possível remover usuário do projeto."), "error");
         return;
       }
 
       delete usersMap[uid];
       renderUserTable();
+      renderLogUsersOptions();
       setFeedback(listaFeedback, "Usuário removido do projeto com sucesso.", "success");
-      return;
+      await loadSelectedLogs();
     }
   });
 
-  modalCloseButton.addEventListener("click", closeModal);
-  modalCancelButton.addEventListener("click", closeModal);
-
+  modalCloseButton.addEventListener("click", closeEditModal);
+  modalCancelButton.addEventListener("click", closeEditModal);
   modalOverlay.addEventListener("click", (event) => {
     if (event.target === modalOverlay) {
-      closeModal();
+      closeEditModal();
     }
   });
 
   modalOverlay.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && modalOverlay.classList.contains("open")) {
-      closeModal();
+      closeEditModal();
     }
   });
 
-  loadUsers();
+  restoreCloseButton.addEventListener("click", closeRestoreModal);
+  restoreCancelButton.addEventListener("click", closeRestoreModal);
+  restoreConfirmButton.addEventListener("click", confirmRestoreBackup);
+  restoreModal.addEventListener("click", (event) => {
+    if (event.target === restoreModal) {
+      closeRestoreModal();
+    }
+  });
+
+  restoreModal.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && restoreModal.classList.contains("open")) {
+      closeRestoreModal();
+    }
+  });
+
+  loadUsers().then(() => {
+    if (logUserSelect.value) {
+      loadSelectedLogs();
+    }
+  });
+  loadBackupsAndRender();
 }

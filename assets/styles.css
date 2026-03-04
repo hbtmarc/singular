@@ -310,6 +310,63 @@ body:not(.auth-mode) #auth-root {
   color: var(--muted);
 }
 
+.admin-warning-box {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #fcd34d;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.admin-backup-list,
+.admin-log-list {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-backup-item,
+.admin-log-item {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  background: var(--surface-soft);
+  display: grid;
+  gap: 8px;
+}
+
+.admin-backup-main,
+.admin-backup-meta,
+.admin-log-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  color: var(--text);
+}
+
+.admin-backup-meta {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.admin-backup-hint {
+  color: #92400e;
+  font-size: 13px;
+}
+
+.admin-log-meta {
+  font-size: 12px;
+  color: var(--muted);
+  word-break: break-word;
+}
+
+.admin-restore-paths {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  color: var(--text);
+}
+
 .admin-label {
   font-weight: 600;
   font-size: 14px;

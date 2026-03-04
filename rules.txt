@@ -1,0 +1,79 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "users": {
+      ".read": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin' && root.child('users').child(auth.uid).child('ativo').val() === true",
+      ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin' && root.child('users').child(auth.uid).child('ativo').val() === true",
+
+      "$uid": {
+        ".read": "auth != null && (auth.uid === $uid || (root.child('users').child(auth.uid).child('role').val() === 'admin' && root.child('users').child(auth.uid).child('ativo').val() === true))",
+        ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin' && root.child('users').child(auth.uid).child('ativo').val() === true",
+
+        "email": { ".validate": "newData.isString() && newData.val().matches(/^\\S+@\\S+\\.\\S+$/)" },
+        "role":  { ".validate": "newData.isString() && newData.val().matches(/^(admin|gerente|administrativo|profissional)$/)" },
+        "ativo": { ".validate": "newData.isBoolean()" },
+        "updatedAt": { ".validate": "newData.isNumber()" },
+        "$other": { ".validate": false }
+      }
+    },
+
+    "emailIndex": {
+      ".read": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin' && root.child('users').child(auth.uid).child('ativo').val() === true",
+      ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin' && root.child('users').child(auth.uid).child('ativo').val() === true",
+
+      "$emailKey": {
+        ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin' && root.child('users').child(auth.uid).child('ativo').val() === true",
+        "uid": { ".validate": "newData.isString()" },
+        "email": { ".validate": "newData.isString() && newData.val().matches(/^\\S+@\\S+\\.\\S+$/)" },
+        "updatedAt": { ".validate": "newData.isNumber()" },
+        "$other": { ".validate": false }
+      }
+    },
+
+    "patients": {
+      ".read": "auth != null && root.child('users').child(auth.uid).child('ativo').val() === true",
+      ".write": "auth != null && root.child('users').child(auth.uid).child('ativo').val() === true"
+    },
+
+    "professionals": {
+      ".read": "auth != null && root.child('users').child(auth.uid).child('ativo').val() === true",
+      ".write": "auth != null && root.child('users').child(auth.uid).child('ativo').val() === true"
+    },
+
+    "services": {
+      ".read": "auth != null && root.child('users').child(auth.uid).child('ativo').val() === true",
+      ".write": "auth != null && root.child('users').child(auth.uid).child('ativo').val() === true"
+    },
+
+    "appointments": {
+      ".read": "auth != null && root.child('users').child(auth.uid).child('ativo').val() === true",
+      ".write": "auth != null && root.child('users').child(auth.uid).child('ativo').val() === true"
+    },
+
+    "finance": {
+      ".read": "auth != null && root.child('users').child(auth.uid).child('ativo').val() === true",
+      ".write": "auth != null && root.child('users').child(auth.uid).child('ativo').val() === true"
+    },
+
+    "auditLogs": {
+      ".read": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin' && root.child('users').child(auth.uid).child('ativo').val() === true",
+      ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin' && root.child('users').child(auth.uid).child('ativo').val() === true",
+      "$uid": {
+        ".read": "auth != null && (auth.uid === $uid || (root.child('users').child(auth.uid).child('role').val() === 'admin' && root.child('users').child(auth.uid).child('ativo').val() === true))",
+        ".write": "auth != null && (auth.uid === $uid || (root.child('users').child(auth.uid).child('role').val() === 'admin' && root.child('users').child(auth.uid).child('ativo').val() === true))"
+      }
+    },
+
+    "backupsMeta": {
+      ".read": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin' && root.child('users').child(auth.uid).child('ativo').val() === true",
+      ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin' && root.child('users').child(auth.uid).child('ativo').val() === true"
+    },
+
+    "backups": {
+      ".read": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin' && root.child('users').child(auth.uid).child('ativo').val() === true",
+      ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin' && root.child('users').child(auth.uid).child('ativo').val() === true"
+    }
+  }
+}
