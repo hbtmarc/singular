@@ -2,10 +2,7 @@ import {
   listProfessionals,
   createProfessional,
   updateProfessional,
-  setProfessionalActive,
-  bulkImportProfessionalsWithAudit,
-  readProfessionalsImportReport,
-  getProfessionalsImportStatus
+  setProfessionalActive
 } from "../firebase.js";
 import {
   onlyDigits,
@@ -23,114 +20,6 @@ import {
 
 function normalizeName(value) {
   return String(value || "").trim().replace(/\s+/g, " ");
-}
-
-function normalizeHeaderKey(value) {
-  return String(value || "")
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]/g, "");
-}
-
-function parseCsvLine(line, delimiter = ";") {
-  const values = [];
-  let current = "";
-  let inQuotes = false;
-
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index];
-
-    if (char === '"') {
-      if (inQuotes && line[index + 1] === '"') {
-        current += '"';
-        index += 1;
-      } else {
-        inQuotes = !inQuotes;
-      }
-      continue;
-    }
-
-    if (char === delimiter && !inQuotes) {
-      values.push(current.trim());
-      current = "";
-      continue;
-    }
-
-    current += char;
-  }
-
-  values.push(current.trim());
-  return values;
-}
-
-function detectCsvDelimiter(headerLine) {
-  const line = String(headerLine || "");
-  const semicolons = (line.match(/;/g) || []).length;
-  const commas = (line.match(/,/g) || []).length;
-  return semicolons >= commas ? ";" : ",";
-}
-
-function normalizeCsvRowKeys(record = {}) {
-  const normalized = {};
-
-  Object.keys(record).forEach((key) => {
-    const normalizedKey = normalizeHeaderKey(key);
-    if (!normalizedKey) {
-      return;
-    }
-    normalized[normalizedKey] = String(record[key] ?? "").trim();
-  });
-
-  return normalized;
-}
-
-function parseCsvProfessionals(text) {
-  const raw = String(text || "").replace(/^\uFEFF/, "");
-  const lines = raw.split(/\r?\n/).filter((line) => line.trim().length > 0);
-
-  if (!lines.length) {
-    return {
-      ok: false,
-      rows: [],
-      message: "Arquivo CSV vazio."
-    };
-  }
-
-  const delimiter = detectCsvDelimiter(lines[0]);
-  const headers = parseCsvLine(lines[0], delimiter);
-
-  if (!headers.length) {
-    return {
-      ok: false,
-      rows: [],
-      message: "Cabeçalho inválido no CSV."
-    };
-  }
-
-  const rows = [];
-
-  for (let index = 1; index < lines.length; index += 1) {
-    const values = parseCsvLine(lines[index], delimiter);
-    const record = {};
-
-    headers.forEach((header, hIndex) => {
-      record[header] = values[hIndex] ?? "";
-    });
-
-    const normalized = normalizeCsvRowKeys(record);
-    rows.push({
-      ...normalized,
-      rowIndex: index + 1
-    });
-  }
-
-  return {
-    ok: true,
-    rows,
-    message: "CSV carregado com sucesso."
-  };
 }
 
 function buildNomeAbreviado(nomeCompleto) {
@@ -281,13 +170,9 @@ function fichaField(label, value) {
 export function render(container) {
   const role = String(window.__userProfile?.role || "").toLowerCase();
   const readOnly = role === "profissional";
-  const canImport = !readOnly;
 
   let professionalsMap = {};
   let editingProfessionalId = "";
-  let importRows = [];
-  let importLastReportId = "";
-  let importLocked = false;
 
   container.innerHTML = `
     <section class="admin-page professionals-page">
@@ -327,31 +212,6 @@ export function render(container) {
           <p id="pro-lista-feedback" class="admin-feedback"></p>
         </div>
       </article>
-
-      ${canImport ? `
-      <article id="pro-import-card" class="card">
-        <h2>Importar lista inicial (uso único)</h2>
-        <p class="admin-card-text">Importador CSV temporário para carga inicial de profissionais com auditoria.</p>
-
-        <div class="admin-card-body">
-          <input id="pro-import-file" class="admin-input" type="file" accept=".csv,text/csv" />
-          <label class="admin-checkline" for="pro-import-clear">
-            <input id="pro-import-clear" type="checkbox" />
-            <span>Limpar base de profissionais antes de importar</span>
-          </label>
-
-          <div id="pro-import-preview" class="admin-result-box">Selecione um CSV para pré-visualizar.</div>
-
-          <div class="admin-inline-actions">
-            <button id="pro-import-btn" type="button" class="admin-btn admin-btn-primary" disabled>Importar agora</button>
-            <button id="pro-import-report-btn" type="button" class="admin-btn admin-btn-secondary" style="display:none;">Ver auditoria</button>
-          </div>
-
-          <p id="pro-import-feedback" class="admin-feedback"></p>
-          <p id="pro-import-error-details" class="admin-error-details"></p>
-        </div>
-      </article>
-      ` : ""}
     </section>
 
     <div id="pro-edit-modal" class="admin-modal-overlay" aria-hidden="true">
@@ -493,15 +353,6 @@ export function render(container) {
   const fichaTitle = container.querySelector("#pro-ficha-title");
   const fichaBody = container.querySelector("#pro-ficha-body");
 
-  const importCard = container.querySelector("#pro-import-card");
-  const importFileInput = container.querySelector("#pro-import-file");
-  const importClearInput = container.querySelector("#pro-import-clear");
-  const importPreview = container.querySelector("#pro-import-preview");
-  const importButton = container.querySelector("#pro-import-btn");
-  const importReportButton = container.querySelector("#pro-import-report-btn");
-  const importFeedback = container.querySelector("#pro-import-feedback");
-  const importErrorDetails = container.querySelector("#pro-import-error-details");
-
   function setFeedback(element, message, type = "info") {
     const colors = {
       info: "#6b7280",
@@ -604,199 +455,6 @@ export function render(container) {
     } else {
       pixChaveInput.value = "";
     }
-  }
-
-  function setImportFeedback(message, type = "info") {
-    if (!importFeedback) {
-      return;
-    }
-
-    const colors = {
-      info: "#6b7280",
-      success: "#065f46",
-      error: "#b91c1c"
-    };
-
-    importFeedback.style.color = colors[type] || colors.info;
-    importFeedback.textContent = message;
-  }
-
-  function setImportErrorDetails(message) {
-    if (!importErrorDetails) {
-      return;
-    }
-
-    importErrorDetails.innerHTML = message ? `<small>${message}</small>` : "";
-  }
-
-  function renderImportPreview() {
-    if (!importPreview) {
-      return;
-    }
-
-    if (importLocked) {
-      importPreview.innerHTML = "<strong>Importador bloqueado.</strong><p>Esta carga inicial já foi concluída.</p>";
-      return;
-    }
-
-    if (!importRows.length) {
-      importPreview.textContent = "Selecione um CSV para pré-visualizar.";
-      return;
-    }
-
-    const previewNames = importRows
-      .slice(0, 8)
-      .map((row) => String(row.nomecompleto || row.nome || "Sem nome").trim())
-      .filter(Boolean);
-
-    const firstNames = previewNames.length
-      ? `<ul class="patients-preview-list">${previewNames.map((name) => `<li>${name}</li>`).join("")}</ul>`
-      : "<p>Sem nomes identificados nas primeiras linhas.</p>";
-
-    importPreview.innerHTML = `
-      <p><strong>Linhas detectadas:</strong> ${importRows.length}</p>
-      <p><strong>Prévia (até 8 nomes):</strong></p>
-      ${firstNames}
-    `;
-  }
-
-  function setImportEnabled(enabled) {
-    if (importFileInput) {
-      importFileInput.disabled = !enabled;
-    }
-    if (importClearInput) {
-      importClearInput.disabled = !enabled;
-    }
-    if (importButton) {
-      importButton.disabled = !enabled || !importRows.length;
-    }
-  }
-
-  async function loadImportStatus() {
-    if (!canImport || !importCard) {
-      return;
-    }
-
-    const status = await getProfessionalsImportStatus();
-
-    if (!status.ok) {
-      setImportFeedback(status.message || "Não foi possível validar o status do importador.", "error");
-      setImportEnabled(false);
-      return;
-    }
-
-    importLocked = status.enabled === false;
-    importLastReportId = status.lastImportId || "";
-
-    if (importReportButton && importLastReportId) {
-      importReportButton.style.display = "inline-flex";
-    }
-
-    if (importLocked) {
-      const completedText = Number.isFinite(Number(status.completedAt))
-        ? new Date(Number(status.completedAt)).toLocaleString("pt-BR")
-        : "data não informada";
-
-      if (importCard) {
-        importCard.style.display = "none";
-      }
-
-      setImportEnabled(false);
-      setImportFeedback(`Importação inicial já concluída em ${completedText}.`, "info");
-      renderImportPreview();
-      return;
-    }
-
-    if (importCard) {
-      importCard.style.display = "";
-    }
-
-    setImportEnabled(true);
-    renderImportPreview();
-  }
-
-  async function showImportReport() {
-    if (!importLastReportId) {
-      setImportFeedback("Nenhum relatório disponível ainda.", "info");
-      return;
-    }
-
-    const report = await readProfessionalsImportReport(importLastReportId);
-    if (!report.ok) {
-      setImportFeedback(report.message || "Não foi possível carregar relatório.", "error");
-      return;
-    }
-
-    const stats = report.stats || {};
-    const importErrors = Array.isArray(stats.importErrors) ? stats.importErrors : [];
-
-    importPreview.innerHTML = `
-      <p><strong>Relatório:</strong> ${importLastReportId}</p>
-      <p><strong>Total:</strong> ${Number(stats.totalRowsDetected || 0)}</p>
-      <p><strong>Importados:</strong> ${Number(stats.importedCount || 0)}</p>
-      <p><strong>Ignorados vazios:</strong> ${Number(stats.skippedEmptyRows || 0)}</p>
-      <p><strong>Sem CPF:</strong> ${Number(stats.semCpfCount || 0)}</p>
-      <p><strong>Alertas:</strong> ${Number(stats.alertCount || 0)}</p>
-    `;
-
-    setImportErrorDetails(importErrors.length ? importErrors.slice(0, 5).join("<br />") : "");
-    setImportFeedback("Relatório carregado com sucesso.", "success");
-  }
-
-  async function handleImportCsv() {
-    if (!canImport || importLocked) {
-      setImportFeedback("Importador bloqueado para novas cargas.", "error");
-      return;
-    }
-
-    if (!importRows.length) {
-      setImportFeedback("Selecione um CSV válido antes de importar.", "error");
-      return;
-    }
-
-    const clearBeforeImport = importClearInput?.checked === true;
-
-    if (clearBeforeImport) {
-      const confirmed = window.confirm("Limpar toda a base de profissionais antes da importação?");
-      if (!confirmed) {
-        return;
-      }
-    }
-
-    setImportEnabled(false);
-    setImportFeedback("Importando profissionais...", "info");
-    setImportErrorDetails("");
-
-    const result = await bulkImportProfessionalsWithAudit(importRows, {
-      clearBeforeImport
-    });
-
-    if (!result.ok) {
-      setImportFeedback(result.message || "Falha ao importar profissionais.", "error");
-      setImportErrorDetails(result.errorMessage || "");
-      await loadImportStatus();
-      return;
-    }
-
-    importLastReportId = result.lastImportId || "";
-    if (importReportButton && importLastReportId) {
-      importReportButton.style.display = "inline-flex";
-    }
-
-    const stats = result.stats || {};
-    setImportFeedback(
-      `Importação concluída. ${Number(stats.importedCount || 0)} profissionais importados.`,
-      "success"
-    );
-
-    if (importFileInput) {
-      importFileInput.value = "";
-    }
-    importRows = [];
-    renderImportPreview();
-
-    await loadProfessionals();
-    await loadImportStatus();
   }
 
   function openCreateModal() {
@@ -1052,44 +710,6 @@ export function render(container) {
 
   pagamentoTipoInput.addEventListener("change", applyPagamentoMode);
 
-  if (importFileInput) {
-    importFileInput.addEventListener("change", async (event) => {
-      const file = event.target.files && event.target.files[0] ? event.target.files[0] : null;
-
-      importRows = [];
-      setImportErrorDetails("");
-
-      if (!file) {
-        renderImportPreview();
-        setImportEnabled(!importLocked);
-        return;
-      }
-
-      const fileText = await file.text();
-      const parsed = parseCsvProfessionals(fileText);
-
-      if (!parsed.ok) {
-        setImportFeedback(parsed.message || "CSV inválido.", "error");
-        renderImportPreview();
-        setImportEnabled(!importLocked);
-        return;
-      }
-
-      importRows = parsed.rows || [];
-      renderImportPreview();
-      setImportEnabled(!importLocked);
-      setImportFeedback("CSV carregado e pronto para importação.", "success");
-    });
-  }
-
-  if (importButton) {
-    importButton.addEventListener("click", handleImportCsv);
-  }
-
-  if (importReportButton) {
-    importReportButton.addEventListener("click", showImportReport);
-  }
-
   listBody.addEventListener("click", async (event) => {
     const actionButton = event.target.closest("button[data-action][data-id]");
     if (!actionButton) {
@@ -1167,6 +787,5 @@ export function render(container) {
   });
 
   applyPagamentoMode();
-  loadImportStatus();
   loadProfessionals();
 }

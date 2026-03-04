@@ -2,10 +2,7 @@ import {
   listPatients,
   createPatient,
   updatePatient,
-  setPatientActive,
-  bulkImportPatientsWithAudit,
-  readImportReport,
-  clearPatientsBeforeImport
+  setPatientActive
 } from "../firebase.js";
 import {
   onlyDigits,
@@ -643,13 +640,9 @@ function readCsvFile(file) {
 
 export function render(container) {
   const userRole = window.__userProfile?.role || "";
-  const isAdmin = userRole === "admin";
   const readOnly = userRole === "profissional";
 
   let patientsMap = {};
-  let csvRows = [];
-  let showAuditImport = false;
-  let lastImportId = "";
   let editingPatientId = "";
 
   container.innerHTML = `
@@ -662,7 +655,6 @@ export function render(container) {
           <div class="admin-inline-actions">
             <input id="pac-filtro" class="admin-input admin-filter" type="text" placeholder="Filtrar por nome, telefone ou CPF" />
             ${readOnly ? "" : '<button id="pac-novo" type="button" class="admin-btn admin-btn-primary">Novo paciente</button>'}
-            ${isAdmin ? '<button id="pac-reimportar" type="button" class="admin-btn admin-btn-secondary">Reimportar (modo auditoria)</button>' : ""}
           </div>
 
           <div class="admin-table-wrap">
@@ -686,31 +678,6 @@ export function render(container) {
           </div>
 
           <p id="pac-lista-feedback" class="admin-feedback"></p>
-        </div>
-      </article>
-
-      <article id="pac-import-card" class="card" style="display:none;">
-        <h2>Importar lista inicial</h2>
-        <p class="admin-card-text">Importe CSV com auditoria completa de linhas e estatísticas.</p>
-
-        <div class="admin-card-body">
-          ${isAdmin ? `
-            <label class="admin-checkline" for="pac-import-clear">
-              <input id="pac-import-clear" type="checkbox" />
-              Limpar base antes de importar (apaga todos os pacientes)
-            </label>
-          ` : ""}
-
-          <input id="pac-import-file" class="admin-input" type="file" accept=".csv" />
-          <div id="pac-import-preview" class="admin-result-box">Selecione um arquivo CSV para pré-visualizar.</div>
-
-          <div class="admin-inline-actions">
-            <button id="pac-import-btn" type="button" class="admin-btn admin-btn-primary" disabled>Importar agora</button>
-            <button id="pac-import-report-btn" type="button" class="admin-btn admin-btn-secondary" style="display:none;">Ver auditoria</button>
-          </div>
-
-          <p id="pac-import-feedback" class="admin-feedback"></p>
-          <p id="pac-import-error-details" class="admin-error-details"></p>
         </div>
       </article>
     </section>
@@ -866,29 +833,12 @@ export function render(container) {
       </div>
     </div>
 
-    <div id="pac-report-modal" class="admin-modal-overlay" aria-hidden="true">
-      <div class="admin-modal ficha-modal" role="dialog" aria-modal="true" aria-labelledby="pac-report-title">
-        <button id="pac-report-close" type="button" class="admin-modal-close" aria-label="Fechar">×</button>
-        <h2 id="pac-report-title">Relatório do import</h2>
-        <div id="pac-report-body" class="admin-card-body admin-modal-body"></div>
-      </div>
-    </div>
   `;
 
   const filtroInput = container.querySelector("#pac-filtro");
   const novoButton = container.querySelector("#pac-novo");
-  const reimportarButton = container.querySelector("#pac-reimportar");
   const listaBody = container.querySelector("#pac-lista-body");
   const listaFeedback = container.querySelector("#pac-lista-feedback");
-
-  const importCard = container.querySelector("#pac-import-card");
-  const importFileInput = container.querySelector("#pac-import-file");
-  const importClearInput = container.querySelector("#pac-import-clear");
-  const importPreview = container.querySelector("#pac-import-preview");
-  const importButton = container.querySelector("#pac-import-btn");
-  const importFeedback = container.querySelector("#pac-import-feedback");
-  const importErrorDetails = container.querySelector("#pac-import-error-details");
-  const importReportButton = container.querySelector("#pac-import-report-btn");
 
   const editOverlay = container.querySelector("#pac-edit-modal");
   const editCloseButton = container.querySelector("#pac-edit-close");
@@ -928,10 +878,6 @@ export function render(container) {
   const fichaClose = container.querySelector("#pac-ficha-close");
   const fichaTitle = container.querySelector("#pac-ficha-title");
   const fichaBody = container.querySelector("#pac-ficha-body");
-
-  const reportOverlay = container.querySelector("#pac-report-modal");
-  const reportClose = container.querySelector("#pac-report-close");
-  const reportBody = container.querySelector("#pac-report-body");
 
   function renderPatientsTable() {
     const filter = String(filtroInput.value || "").trim().toLowerCase();
@@ -1291,60 +1237,6 @@ export function render(container) {
     openModal(fichaOverlay);
   }
 
-  async function openImportReportModal(importId) {
-    reportBody.innerHTML = "<p class=\"admin-empty\">Carregando relatório...</p>";
-    openModal(reportOverlay);
-
-    const report = await readImportReport(importId);
-    if (!report.ok) {
-      reportBody.innerHTML = `<p class="admin-error">${report.message || "Não foi possível carregar o relatório."}</p>`;
-      return;
-    }
-
-    const stats = report.stats || {};
-    const rows = report.rows || {};
-
-    const rowsList = Object.keys(rows)
-      .map((rowIndex) => ({ rowIndex: Number(rowIndex), ...rows[rowIndex] }))
-      .sort((a, b) => a.rowIndex - b.rowIndex);
-
-    const problematic = rowsList.filter((row) => row.status !== "importado" || row.erro || (Array.isArray(row.alertas) && row.alertas.length));
-
-    reportBody.innerHTML = `
-      <section class="ficha-section">
-        <h3>Resumo</h3>
-        <p><strong>Total de linhas:</strong> ${stats.totalLinhas || 0}</p>
-        <p><strong>Total detectado:</strong> ${stats.totalRowsDetected || stats.totalLinhas || 0}</p>
-        <p><strong>Linhas vazias ignoradas:</strong> ${stats.skippedEmptyRows || 0}</p>
-        <p><strong>Importados:</strong> ${stats.importedCount || stats.importados || 0}</p>
-        <p><strong>Sem CPF:</strong> ${stats.semCpfCount || stats.semCpf || 0}</p>
-        <p><strong>Alertas:</strong> ${stats.alertCount || 0}</p>
-        <p><strong>Início:</strong> ${stats.startedAt ? new Date(stats.startedAt).toLocaleString("pt-BR") : "-"}</p>
-        <p><strong>Fim:</strong> ${stats.finishedAt ? new Date(stats.finishedAt).toLocaleString("pt-BR") : "-"}</p>
-      </section>
-
-      <section class="ficha-section">
-        <h3>Linhas ignoradas/erro</h3>
-        ${problematic.length
-          ? `
-            <div class="ficha-original-grid">
-              <div class="ficha-original-grid-cell ficha-original-grid-key ficha-original-grid-head">Linha</div>
-              <div class="ficha-original-grid-cell ficha-original-grid-head">Detalhe</div>
-              ${problematic.map((row) => `
-                <div class="ficha-original-grid-cell ficha-original-grid-key">${row.rowIndex}</div>
-                <div class="ficha-original-grid-cell">
-                  ${row.status || "-"}
-                  ${row.erro ? ` • ${row.erro}` : ""}
-                  ${Array.isArray(row.alertas) && row.alertas.length ? ` • alertas: ${row.alertas.join("; ")}` : ""}
-                </div>
-              `).join("")}
-            </div>
-          `
-          : '<p class="admin-empty">Nenhuma linha problemática neste import.</p>'}
-      </section>
-    `;
-  }
-
   async function refreshPatients() {
     const result = await listPatients();
 
@@ -1355,7 +1247,6 @@ export function render(container) {
           <td colspan="6" class="admin-error">Falha ao carregar pacientes.</td>
         </tr>
       `;
-      importCard.style.display = "none";
       return;
     }
 
@@ -1364,18 +1255,6 @@ export function render(container) {
 
     renderPatientsTable();
     setFeedback(listaFeedback, `${total} paciente(s) carregado(s).`, "info");
-
-    const shouldShowImport = total === 0 || (showAuditImport && isAdmin);
-    importCard.style.display = shouldShowImport ? "" : "none";
-
-    if (!shouldShowImport) {
-      csvRows = [];
-      importPreview.innerHTML = "Selecione um arquivo CSV para pré-visualizar.";
-      importButton.disabled = true;
-      importReportButton.style.display = "none";
-      importFeedback.textContent = "";
-      setErrorDetails(importErrorDetails, "", "");
-    }
   }
 
   async function savePatient() {
@@ -1464,16 +1343,6 @@ export function render(container) {
     novoButton.addEventListener("click", () => openEditModal());
   }
 
-  if (reimportarButton) {
-    reimportarButton.addEventListener("click", () => {
-      showAuditImport = !showAuditImport;
-      reimportarButton.textContent = showAuditImport
-        ? "Ocultar reimportação"
-        : "Reimportar (modo auditoria)";
-      refreshPatients();
-    });
-  }
-
   editCloseButton.addEventListener("click", () => closeModal(editOverlay));
   editCancelButton.addEventListener("click", () => closeModal(editOverlay));
   editSaveButton.addEventListener("click", savePatient);
@@ -1506,9 +1375,8 @@ export function render(container) {
   });
 
   fichaClose.addEventListener("click", () => closeModal(fichaOverlay));
-  reportClose.addEventListener("click", () => closeModal(reportOverlay));
 
-  [editOverlay, fichaOverlay, reportOverlay].forEach((overlay) => {
+  [editOverlay, fichaOverlay].forEach((overlay) => {
     overlay.addEventListener("click", (event) => {
       if (event.target === overlay) {
         closeModal(overlay);
@@ -1554,141 +1422,6 @@ export function render(container) {
       }
       await refreshPatients();
     }
-  });
-
-  importFileInput.addEventListener("change", async () => {
-    importButton.disabled = true;
-    importReportButton.style.display = "none";
-    lastImportId = "";
-    setErrorDetails(importErrorDetails, "", "");
-
-    const file = importFileInput.files?.[0];
-    if (!file) {
-      csvRows = [];
-      importPreview.innerHTML = "Selecione um arquivo CSV para pré-visualizar.";
-      return;
-    }
-
-    try {
-      const text = await readCsvFile(file);
-      csvRows = parseCsvToRows(text);
-
-      const nonEmptyRows = csvRows.filter((row) => {
-        const values = Object.values(row.rawRow || {});
-        return values.some((value) => String(value || "").trim() !== "");
-      });
-
-      const skippedEmptyRows = csvRows.length - nonEmptyRows.length;
-      const preview = csvRows.slice(0, 5);
-      const comCpf = nonEmptyRows.filter((row) => {
-        const core = buildCoreFromCsvRow(row.rawRow, row.normalizedRow);
-        return core.cpf.length >= 11;
-      }).length;
-      const semCpf = nonEmptyRows.length - comCpf;
-
-      importPreview.innerHTML = `
-        <p><strong>Total detectado:</strong> ${nonEmptyRows.length}</p>
-        <p><strong>Linhas vazias ignoradas:</strong> ${skippedEmptyRows}</p>
-        <p><strong>Com CPF:</strong> ${comCpf}</p>
-        <p><strong>Sem CPF:</strong> ${semCpf}</p>
-        <p><strong>Prévia (5 primeiras linhas):</strong></p>
-        <ul class="patients-preview-list">
-          ${preview.map((row) => {
-            const core = buildCoreFromCsvRow(row.rawRow, row.normalizedRow);
-            return `<li><strong>${core.nome || "Sem nome"}</strong> • ${core.telefone || "Sem telefone"} • ${core.cpf || "sem CPF"}</li>`;
-          }).join("")}
-        </ul>
-      `;
-
-      importButton.disabled = csvRows.length === 0;
-      setFeedback(importFeedback, "Prévia carregada. Pronto para importar.", "info");
-    } catch (error) {
-      csvRows = [];
-      importPreview.innerHTML = "Não foi possível processar o CSV selecionado.";
-      setFeedback(importFeedback, "Falha na leitura do arquivo CSV.", "error");
-      setErrorDetails(importErrorDetails, error?.code || "csv/read-failed", error?.message || "Falha ao ler arquivo.");
-    }
-  });
-
-  importButton.addEventListener("click", async () => {
-    if (!csvRows.length) {
-      setFeedback(importFeedback, "Nenhuma linha disponível para importar.", "error");
-      return;
-    }
-
-    const preparedRows = csvRows.map((row) => {
-      const core = buildCoreFromCsvRow(row.rawRow, row.normalizedRow);
-      const endereco = buildEnderecoFromCsvRow(row.rawRow, row.normalizedRow);
-      const legacy = buildLegacyFromCsvRow(row.rawRow, row.normalizedRow);
-      const responsavelFinanceiro = String(
-        row.rawRow["Resp.Fin"] || row.normalizedRow.respfin || ""
-      ).trim();
-
-      return {
-        rowIndex: row.rowIndex,
-        core,
-        endereco,
-        legacy,
-        responsavelFinanceiro,
-        dadosOriginais: row.rawRow
-      };
-    });
-
-    importButton.disabled = true;
-    importReportButton.style.display = "none";
-    setErrorDetails(importErrorDetails, "", "");
-
-    if (isAdmin && importClearInput?.checked) {
-      const clearResult = await clearPatientsBeforeImport(Object.keys(patientsMap));
-      if (!clearResult.ok) {
-        setFeedback(importFeedback, clearResult.message || "Falha ao limpar base antes da importação.", "error");
-        setErrorDetails(importErrorDetails, clearResult.errorCode, clearResult.errorMessage);
-        importButton.disabled = false;
-        return;
-      }
-    }
-
-    const result = await bulkImportPatientsWithAudit(preparedRows, {
-      onProgress: (current, total) => {
-        setFeedback(importFeedback, `Importando... (${current}/${total})`, "info");
-      }
-    });
-
-    if (!result.ok) {
-      setFeedback(importFeedback, result.message || "Falha na importação.", "error");
-      setErrorDetails(importErrorDetails, result.errorCode, result.errorMessage);
-      importButton.disabled = false;
-      return;
-    }
-
-    lastImportId = result.lastImportId || "";
-    setFeedback(
-      importFeedback,
-      `Importação concluída. totalRowsDetected=${result.stats.totalRowsDetected || 0}, skippedEmptyRows=${result.stats.skippedEmptyRows || 0}, importedCount=${result.stats.importedCount || 0}, semCpfCount=${result.stats.semCpfCount || 0}, alertCount=${result.stats.alertCount || 0}, lastImportId=${lastImportId || "-"}.`,
-      "success"
-    );
-
-    if (result.auditWriteOk === false) {
-      setErrorDetails(importErrorDetails, result.errorCode, result.errorMessage);
-    }
-
-    importReportButton.style.display = "inline-flex";
-    importButton.disabled = true;
-
-    // Após importar uma base vazia, oculta o card; em modo auditoria admin, mantém visível.
-    if (!showAuditImport) {
-      importCard.style.display = "none";
-    }
-
-    await refreshPatients();
-  });
-
-  importReportButton.addEventListener("click", async () => {
-    if (!lastImportId) {
-      setFeedback(importFeedback, "Nenhum import recente disponível para relatório.", "error");
-      return;
-    }
-    await openImportReportModal(lastImportId);
   });
 
   refreshPatients();
