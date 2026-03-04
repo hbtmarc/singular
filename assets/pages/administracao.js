@@ -113,6 +113,7 @@ export function render(container) {
 
   let usersMap = {};
   let backupsList = [];
+  let lastLoadedLogs = [];
   let editingUid = "";
   let editingOriginalEmail = "";
   let restoreTargetBackupId = "";
@@ -217,13 +218,27 @@ export function render(container) {
         <p class="admin-card-text">Visualize os últimos eventos registrados por usuário.</p>
 
         <div class="admin-card-body">
-          <label class="admin-label" for="adm-log-user">Usuário</label>
-          <div class="admin-inline-actions">
-            <select id="adm-log-user" class="admin-input"></select>
-            <button id="adm-log-refresh" type="button" class="admin-btn admin-btn-secondary">Atualizar logs</button>
+          <div class="admin-log-filters">
+            <div>
+              <label class="admin-label" for="adm-log-user">Usuário</label>
+              <select id="adm-log-user" class="admin-input"></select>
+            </div>
+            <div>
+              <label class="admin-label" for="adm-log-date">Data</label>
+              <input id="adm-log-date" class="admin-input" type="date" />
+            </div>
+            <div>
+              <label class="admin-label" for="adm-log-action">Buscar</label>
+              <input id="adm-log-action" class="admin-input" type="text" placeholder="login, rota, criar…" />
+            </div>
           </div>
 
-          <div id="adm-log-list" class="admin-result-box admin-log-list">Selecione um usuário para carregar os logs.</div>
+          <div class="admin-inline-actions" style="margin-top:8px;">
+            <button id="adm-log-refresh" type="button" class="admin-btn admin-btn-secondary">Atualizar logs</button>
+            <button id="adm-log-clear" type="button" class="admin-btn admin-btn-secondary">Limpar filtros</button>
+          </div>
+
+          <div id="adm-log-list" class="admin-log-timeline">Selecione um usuário para carregar os logs.</div>
           <p id="adm-log-feedback" class="admin-feedback"></p>
         </div>
       </article>
@@ -305,7 +320,10 @@ export function render(container) {
   const backupFeedback = container.querySelector("#adm-backup-feedback");
 
   const logUserSelect = container.querySelector("#adm-log-user");
+  const logDateInput = container.querySelector("#adm-log-date");
+  const logActionInput = container.querySelector("#adm-log-action");
   const logRefreshButton = container.querySelector("#adm-log-refresh");
+  const logClearButton = container.querySelector("#adm-log-clear");
   const logListBox = container.querySelector("#adm-log-list");
   const logFeedback = container.querySelector("#adm-log-feedback");
 
@@ -520,7 +538,7 @@ export function render(container) {
       .sort((a, b) => String(a[1]?.email || "").localeCompare(String(b[1]?.email || "")));
 
     const currentUid = String(window.__currentUser?.uid || "").trim();
-    const options = [];
+    const options = ["<option value='__all__'>Todos os usuários</option>"];
 
     if (currentUid && usersMap[currentUid]) {
       options.push(`<option value="${currentUid}">Atual (${usersMap[currentUid].email || currentUid})</option>`);
@@ -536,25 +554,122 @@ export function render(container) {
     logUserSelect.innerHTML = options.length ? options.join("") : "<option value=''>Sem usuários</option>";
   }
 
+  function formatTime(timestamp) {
+    if (typeof timestamp !== "number") {
+      return "--:--";
+    }
+    try {
+      return new Date(timestamp).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+    } catch (error) {
+      return "--:--";
+    }
+  }
+
+  function formatDateOnly(timestamp) {
+    if (typeof timestamp !== "number") {
+      return "Data desconhecida";
+    }
+    try {
+      return new Date(timestamp).toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
+    } catch (error) {
+      return "Data desconhecida";
+    }
+  }
+
+  function groupLogsByDay(logs) {
+    const groups = {};
+    for (let index = 0; index < logs.length; index += 1) {
+      const item = logs[index];
+      const key = toLocalDateYmd(item.ts) || "unknown";
+      if (!groups[key]) {
+        groups[key] = { dateLabel: formatDateOnly(item.ts), entries: [] };
+      }
+      groups[key].entries.push(item);
+    }
+    return Object.values(groups);
+  }
+
+  function badgeClass(tipo) {
+    const t = String(tipo || "").toLowerCase();
+    if (t.includes("navega") || t === "rota") return "admin-log-badge--nav";
+    if (t.includes("backup") || t.includes("restore")) return "admin-log-badge--backup";
+    if (t.includes("erro") || t.includes("error")) return "admin-log-badge--error";
+    if (t.includes("auth") || t.includes("login") || t.includes("logout")) return "admin-log-badge--auth";
+    return "";
+  }
+
   function renderLogs(logs) {
     if (!logs.length) {
       logListBox.innerHTML = "Nenhum log encontrado para este usuário.";
       return;
     }
 
-    logListBox.innerHTML = logs.map((item) => {
-      const meta = item.meta && Object.keys(item.meta).length
-        ? JSON.stringify(item.meta)
-        : "{}";
+    const groups = groupLogsByDay(logs);
+
+    logListBox.innerHTML = groups.map((group) => {
+      const rows = group.entries.map((item) => {
+        const actor = String(item.email || item.uid || "").trim();
+        const badge = badgeClass(item.tipo);
+
+        return `
+          <div class="admin-log-entry">
+            <span class="admin-log-time">${formatTime(item.ts)}</span>
+            <div class="admin-log-body">
+              <div class="admin-log-headline">
+                <span class="admin-log-badge ${badge}">${item.tipo}</span>
+                <strong class="admin-log-action">${item.acao}</strong>
+              </div>
+              <div class="admin-log-summary">${item.resumo || "Sem resumo"}${actor ? ` &mdash; <span class="admin-log-actor">${actor}</span>` : ""}</div>
+            </div>
+          </div>
+        `;
+      }).join("");
 
       return `
-        <div class="admin-log-item">
-          <div class="admin-log-row"><strong>${formatDateTime(item.ts)}</strong> • ${item.tipo} • ${item.acao}</div>
-          <div class="admin-log-row">${item.resumo || "Sem resumo"}</div>
-          <div class="admin-log-meta">${meta}</div>
+        <div class="admin-log-day-group">
+          <div class="admin-log-day-header">${group.dateLabel}</div>
+          ${rows}
         </div>
       `;
     }).join("");
+  }
+
+  function toLocalDateYmd(timestamp) {
+    if (!Number.isFinite(Number(timestamp))) {
+      return "";
+    }
+
+    const date = new Date(Number(timestamp));
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  function applyLogFilters(logs) {
+    const selectedDate = String(logDateInput.value || "").trim();
+    const selectedAction = String(logActionInput.value || "").trim().toLowerCase();
+
+    return logs.filter((item) => {
+      if (selectedDate) {
+        const itemDate = toLocalDateYmd(item.ts);
+        if (itemDate !== selectedDate) {
+          return false;
+        }
+      }
+
+      if (selectedAction) {
+        const acao = String(item.acao || "").toLowerCase();
+        const tipo = String(item.tipo || "").toLowerCase();
+        const resumo = String(item.resumo || "").toLowerCase();
+        const matches = acao.includes(selectedAction) || tipo.includes(selectedAction) || resumo.includes(selectedAction);
+        if (!matches) {
+          return false;
+        }
+      }
+
+      return true;
+    });
   }
 
   async function loadBackupsAndRender() {
@@ -596,23 +711,54 @@ export function render(container) {
   }
 
   async function loadSelectedLogs() {
-    const uid = String(logUserSelect.value || "").trim();
-    if (!uid) {
+    const selectedUid = String(logUserSelect.value || "").trim();
+    if (!selectedUid) {
       logListBox.innerHTML = "Selecione um usuário para carregar os logs.";
       return;
     }
 
     logListBox.innerHTML = "Carregando logs...";
-    const result = await listUserAuditLogs(uid, 60);
+    let mergedLogs = [];
 
-    if (!result.ok) {
-      setFeedback(logFeedback, buildErrorMessage(result, "Não foi possível carregar os logs."), "error");
-      logListBox.innerHTML = "Falha ao carregar logs.";
-      return;
+    if (selectedUid === "__all__") {
+      const entries = Object.entries(usersMap);
+      for (let index = 0; index < entries.length; index += 1) {
+        const [uid, profile] = entries[index];
+        const result = await listUserAuditLogs(uid, 60);
+        if (!result.ok) {
+          continue;
+        }
+
+        const normalized = (result.logs || []).map((item) => ({
+          ...item,
+          uid,
+          email: profile?.email || ""
+        }));
+        mergedLogs = mergedLogs.concat(normalized);
+      }
+    } else {
+      const result = await listUserAuditLogs(selectedUid, 120);
+
+      if (!result.ok) {
+        setFeedback(logFeedback, buildErrorMessage(result, "Não foi possível carregar os logs."), "error");
+        logListBox.innerHTML = "Falha ao carregar logs.";
+        return;
+      }
+
+      const profile = usersMap[selectedUid] || {};
+      mergedLogs = (result.logs || []).map((item) => ({
+        ...item,
+        uid: selectedUid,
+        email: profile?.email || ""
+      }));
     }
 
-    renderLogs(result.logs || []);
-    setFeedback(logFeedback, `${(result.logs || []).length} log(s) carregado(s).`, "info");
+    mergedLogs.sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0));
+    lastLoadedLogs = mergedLogs;
+
+    const filtered = applyLogFilters(lastLoadedLogs);
+    renderLogs(filtered);
+    setFeedback(logFeedback, `${filtered.length} log(s) após filtros.`, "info");
   }
 
   async function handleBuscarUsuario() {
@@ -886,6 +1032,25 @@ export function render(container) {
 
   logRefreshButton.addEventListener("click", loadSelectedLogs);
   logUserSelect.addEventListener("change", loadSelectedLogs);
+  logClearButton.addEventListener("click", () => {
+    logDateInput.value = "";
+    logActionInput.value = "";
+    const filtered = applyLogFilters(lastLoadedLogs);
+    renderLogs(filtered);
+    setFeedback(logFeedback, `${filtered.length} log(s) após filtros.`, "info");
+  });
+
+  logDateInput.addEventListener("change", () => {
+    const filtered = applyLogFilters(lastLoadedLogs);
+    renderLogs(filtered);
+    setFeedback(logFeedback, `${filtered.length} log(s) após filtros.`, "info");
+  });
+
+  logActionInput.addEventListener("input", () => {
+    const filtered = applyLogFilters(lastLoadedLogs);
+    renderLogs(filtered);
+    setFeedback(logFeedback, `${filtered.length} log(s) após filtros.`, "info");
+  });
 
   redefinirButton.addEventListener("click", async () => {
     const email = normalizeEmail(redefinirButton.dataset.email || criarEmailInput.value);

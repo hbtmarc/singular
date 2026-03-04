@@ -319,14 +319,136 @@ body:not(.auth-mode) #auth-root {
   color: #92400e;
 }
 
-.admin-backup-list,
-.admin-log-list {
+.admin-backup-list {
   display: grid;
   gap: 10px;
 }
 
-.admin-backup-item,
-.admin-log-item {
+.admin-log-filters {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.admin-log-filters > div {
+  display: grid;
+  gap: 4px;
+}
+
+.admin-log-timeline {
+  max-height: 520px;
+  overflow-y: auto;
+  display: grid;
+  gap: 16px;
+  padding-right: 4px;
+}
+
+.admin-log-day-group {
+  display: grid;
+  gap: 6px;
+}
+
+.admin-log-day-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-soft);
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--muted);
+  text-transform: capitalize;
+  border-bottom: 1px solid var(--border);
+}
+
+.admin-log-entry {
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  gap: 10px;
+  align-items: start;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-soft);
+}
+
+.admin-log-entry:hover {
+  background: #f3f4f6;
+}
+
+.admin-log-time {
+  font-family: monospace;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  padding-top: 2px;
+}
+
+.admin-log-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.admin-log-headline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.admin-log-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #e5e7eb;
+  color: #374151;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.admin-log-badge--nav {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.admin-log-badge--backup {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.admin-log-badge--error {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.admin-log-badge--auth {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.admin-log-action {
+  font-size: 14px;
+  color: var(--text);
+}
+
+.admin-log-summary {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.admin-log-actor {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.admin-backup-item {
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 10px;
@@ -336,8 +458,7 @@ body:not(.auth-mode) #auth-root {
 }
 
 .admin-backup-main,
-.admin-backup-meta,
-.admin-log-row {
+.admin-backup-meta {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -353,12 +474,6 @@ body:not(.auth-mode) #auth-root {
 .admin-backup-hint {
   color: #92400e;
   font-size: 13px;
-}
-
-.admin-log-meta {
-  font-size: 12px;
-  color: var(--muted);
-  word-break: break-word;
 }
 
 .admin-restore-paths {
@@ -984,5 +1099,13 @@ body:not(.auth-mode) #auth-root {
 
   .agenda-edit-row {
     grid-template-columns: 1fr;
+  }
+
+  .admin-log-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-log-entry {
+    grid-template-columns: 44px 1fr;
   }
 }
