@@ -14,6 +14,9 @@
         "email": { ".validate": "newData.isString() && newData.val().matches(/^\\S+@\\S+\\.\\S+$/)" },
         "role":  { ".validate": "newData.isString() && newData.val().matches(/^(admin|gerente|administrativo|profissional)$/)" },
         "ativo": { ".validate": "newData.isBoolean()" },
+        "createdAt": { ".validate": "newData.val() === null || newData.isNumber()" },
+        "deletedAt": { ".validate": "newData.val() === null || newData.isNumber()" },
+        "deletedBy": { ".validate": "newData.val() === null || newData.isString()" },
         "updatedAt": { ".validate": "newData.isNumber()" },
         "$other": { ".validate": false }
       }

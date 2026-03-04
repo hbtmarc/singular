@@ -940,17 +940,38 @@ export async function upsertUserProfile(uid, profile) {
 
   try {
     const database = getDatabaseInstance();
-    const currentSnap = await get(dbRef(database, `users/${uid}`));
+    const userReference = dbRef(database, `users/${uid}`);
+    const currentSnap = await get(userReference);
     const current = currentSnap.exists() ? currentSnap.val() : {};
 
-    await set(dbRef(database, `users/${uid}`), {
+    const fullPayload = {
       email,
       role,
       ativo,
       deletedAt: ativo ? null : (typeof current?.deletedAt === "number" ? current.deletedAt : null),
       deletedBy: ativo ? "" : (typeof current?.deletedBy === "string" ? current.deletedBy : ""),
       updatedAt: Date.now()
-    });
+    };
+
+    let usedCompatibilityMode = false;
+
+    try {
+      await set(userReference, fullPayload);
+    } catch (primaryError) {
+      const compatibilityPayload = {
+        email,
+        role,
+        ativo,
+        updatedAt: Date.now()
+      };
+
+      try {
+        await set(userReference, compatibilityPayload);
+        usedCompatibilityMode = true;
+      } catch (compatibilityError) {
+        throw compatibilityError;
+      }
+    }
 
     await logActivity({
       tipo: "admin",
@@ -965,12 +986,15 @@ export async function upsertUserProfile(uid, profile) {
 
     return {
       ok: true,
-      message: "Perfil salvo com sucesso."
+      message: usedCompatibilityMode
+        ? "Perfil salvo em modo compatível com as regras atuais do RTDB."
+        : "Perfil salvo com sucesso."
     };
   } catch (error) {
     return {
       ok: false,
-      message: "Não foi possível salvar o perfil no RTDB."
+      message: getFirebaseErrorMessage(error, "Não foi possível salvar o perfil no RTDB."),
+      code: String(error?.code || "")
     };
   }
 }

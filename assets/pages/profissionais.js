@@ -214,7 +214,7 @@ export function render(container) {
       </article>
     </section>
 
-    <div id="pro-edit-modal" class="admin-modal-overlay" aria-hidden="true">
+    <div id="pro-edit-modal" class="admin-modal-overlay" aria-hidden="true" inert>
       <div class="admin-modal patient-edit-modal" role="dialog" aria-modal="true" aria-labelledby="pro-edit-title">
         <button id="pro-edit-close" type="button" class="admin-modal-close" aria-label="Fechar">×</button>
         <h2 id="pro-edit-title">Novo profissional</h2>
@@ -308,7 +308,7 @@ export function render(container) {
       </div>
     </div>
 
-    <div id="pro-ficha-modal" class="admin-modal-overlay" aria-hidden="true">
+    <div id="pro-ficha-modal" class="admin-modal-overlay" aria-hidden="true" inert>
       <div class="admin-modal ficha-modal" role="dialog" aria-modal="true" aria-labelledby="pro-ficha-title">
         <button id="pro-ficha-close" type="button" class="admin-modal-close" aria-label="Fechar">×</button>
         <h2 id="pro-ficha-title">Ficha do profissional</h2>
@@ -352,6 +352,7 @@ export function render(container) {
   const fichaCloseButton = container.querySelector("#pro-ficha-close");
   const fichaTitle = container.querySelector("#pro-ficha-title");
   const fichaBody = container.querySelector("#pro-ficha-body");
+  const modalFocusOrigin = new WeakMap();
 
   function setFeedback(element, message, type = "info") {
     const colors = {
@@ -364,32 +365,63 @@ export function render(container) {
     element.textContent = message;
   }
 
-  function closeEditModal() {
-    editModalOverlay.classList.remove("open");
-    editModalOverlay.setAttribute("aria-hidden", "true");
+  function openOverlay(overlay, triggerEl = null) {
+    if (!overlay) {
+      return;
+    }
+
+    const origin = triggerEl instanceof HTMLElement ? triggerEl : document.activeElement;
+    if (origin instanceof HTMLElement) {
+      modalFocusOrigin.set(overlay, origin);
+    }
+
+    overlay.classList.add("open");
+    overlay.setAttribute("aria-hidden", "false");
+    overlay.removeAttribute("inert");
+    document.body.style.overflow = "hidden";
+  }
+
+  function closeOverlay(overlay) {
+    if (!overlay) {
+      return;
+    }
+
+    const activeElement = document.activeElement;
+    if (activeElement instanceof HTMLElement && overlay.contains(activeElement)) {
+      activeElement.blur();
+    }
+
+    overlay.classList.remove("open");
+    overlay.setAttribute("aria-hidden", "true");
+    overlay.setAttribute("inert", "");
     document.body.style.overflow = "";
+
+    const origin = modalFocusOrigin.get(overlay);
+    if (origin instanceof HTMLElement && origin.isConnected) {
+      window.setTimeout(() => {
+        origin.focus();
+      }, 0);
+    }
+  }
+
+  function closeEditModal() {
+    closeOverlay(editModalOverlay);
     setFeedback(editFeedback, "", "info");
   }
 
-  function openEditModal() {
-    editModalOverlay.classList.add("open");
-    editModalOverlay.setAttribute("aria-hidden", "false");
-    document.body.style.overflow = "hidden";
+  function openEditModal(triggerEl = null) {
+    openOverlay(editModalOverlay, triggerEl || document.activeElement);
     window.setTimeout(() => {
       nomeCompletoInput.focus();
     }, 0);
   }
 
   function closeFichaModal() {
-    fichaModalOverlay.classList.remove("open");
-    fichaModalOverlay.setAttribute("aria-hidden", "true");
-    document.body.style.overflow = "";
+    closeOverlay(fichaModalOverlay);
   }
 
-  function openFichaModal() {
-    fichaModalOverlay.classList.add("open");
-    fichaModalOverlay.setAttribute("aria-hidden", "false");
-    document.body.style.overflow = "hidden";
+  function openFichaModal(triggerEl = null) {
+    openOverlay(fichaModalOverlay, triggerEl || document.activeElement);
   }
 
   function clearEditForm() {
@@ -461,7 +493,7 @@ export function render(container) {
     editingProfessionalId = "";
     editModalTitle.textContent = "Novo profissional";
     clearEditForm();
-    openEditModal();
+    openEditModal(document.activeElement);
   }
 
   function openEditById(professionalId) {
@@ -474,7 +506,7 @@ export function render(container) {
     editingProfessionalId = professionalId;
     editModalTitle.textContent = "Editar profissional";
     populateEditForm(professional);
-    openEditModal();
+    openEditModal(document.activeElement);
   }
 
   function renderFicha(professional) {
@@ -675,7 +707,7 @@ export function render(container) {
     setFeedback(listFeedback, result.message || "Profissional salvo com sucesso.", "success");
   }
 
-  function openFichaById(professionalId) {
+  function openFichaById(professionalId, triggerEl = null) {
     const professional = professionalsMap[professionalId];
     if (!professional) {
       setFeedback(listFeedback, "Profissional não encontrado.", "error");
@@ -683,7 +715,7 @@ export function render(container) {
     }
 
     renderFicha(professional);
-    openFichaModal();
+    openFichaModal(triggerEl || document.activeElement);
   }
 
   filterInput.addEventListener("input", renderTable);
@@ -725,7 +757,7 @@ export function render(container) {
     }
 
     if (action === "ficha") {
-      openFichaById(professionalId);
+      openFichaById(professionalId, actionButton);
       return;
     }
 

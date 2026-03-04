@@ -2,7 +2,8 @@ import {
   listPatients,
   createPatient,
   updatePatient,
-  setPatientActive
+  setPatientActive,
+  listProfessionals
 } from "../firebase.js";
 import {
   onlyDigits,
@@ -493,7 +494,124 @@ function normalizeAgendaTextValue(value) {
   return raw;
 }
 
-function buildAgendaSlotsFromPlano(patient) {
+function normalizeLookupValue(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeCompactValue(value) {
+  return normalizeLookupValue(value).replace(/\s+/g, "");
+}
+
+function buildProfessionalReferenceIndex(professionalsMap = {}) {
+  const aliasCandidates = new Map();
+  const compactCandidates = new Map();
+
+  const addCandidate = (map, key, canonical) => {
+    const normalizedKey = String(key || "").trim();
+    if (!normalizedKey) {
+      return;
+    }
+
+    if (!map.has(normalizedKey)) {
+      map.set(normalizedKey, new Set([canonical]));
+      return;
+    }
+
+    map.get(normalizedKey).add(canonical);
+  };
+
+  Object.values(professionalsMap || {}).forEach((professional) => {
+    const nomeCompleto = String(professional?.nomeCompleto || "").trim();
+    const nomeAbreviado = String(professional?.nomeAbreviado || "").trim();
+    const canonical = normalizeName(nomeAbreviado || nomeCompleto);
+
+    if (!canonical) {
+      return;
+    }
+
+    const parts = normalizeName(nomeCompleto).split(" ").filter(Boolean);
+    const firstName = parts[0] || "";
+    const secondName = parts[1] || "";
+    const lastName = parts[parts.length - 1] || "";
+
+    const aliases = [
+      nomeCompleto,
+      nomeAbreviado,
+      firstName,
+      secondName ? `${firstName} ${secondName}` : "",
+      secondName ? `${firstName} ${secondName.charAt(0)}.` : "",
+      secondName ? `${firstName}${secondName.charAt(0)}` : "",
+      lastName ? `${firstName} ${lastName.charAt(0)}.` : "",
+      lastName ? `${firstName}${lastName.charAt(0)}` : ""
+    ].map((item) => normalizeName(item)).filter(Boolean);
+
+    aliases.forEach((alias) => {
+      const lookupAlias = normalizeLookupValue(alias);
+      const compactAlias = normalizeCompactValue(alias);
+      addCandidate(aliasCandidates, lookupAlias, canonical);
+      addCandidate(compactCandidates, compactAlias, canonical);
+    });
+  });
+
+  const collapseUnique = (candidateMap) => {
+    const out = new Map();
+    candidateMap.forEach((set, key) => {
+      if (set.size === 1) {
+        out.set(key, Array.from(set)[0]);
+      }
+    });
+    return out;
+  };
+
+  return {
+    aliasMap: collapseUnique(aliasCandidates),
+    compactMap: collapseUnique(compactCandidates)
+  };
+}
+
+function resolveProfessionalByReference(rawValue, referenceIndex) {
+  const original = normalizeName(rawValue);
+  if (!original) {
+    return "";
+  }
+
+  const lookup = normalizeLookupValue(original);
+  const compact = normalizeCompactValue(original);
+  const aliasMap = referenceIndex?.aliasMap;
+  const compactMap = referenceIndex?.compactMap;
+
+  if (aliasMap instanceof Map && aliasMap.has(lookup)) {
+    return aliasMap.get(lookup);
+  }
+
+  if (compactMap instanceof Map && compactMap.has(compact)) {
+    return compactMap.get(compact);
+  }
+
+  return original;
+}
+
+function remapDelimitedProfessionalNames(rawValue, resolver) {
+  const raw = String(rawValue || "").trim();
+  if (!raw) {
+    return raw;
+  }
+
+  return raw
+    .split(";")
+    .map((chunk) => normalizeName(chunk))
+    .map((chunk) => (chunk ? resolver(chunk) : ""))
+    .join("; ");
+}
+
+function buildAgendaSlotsFromPlano(patient, resolver = null) {
   const plano = patient?.planoTerapias && typeof patient.planoTerapias === "object"
     ? patient.planoTerapias
     : {};
@@ -503,16 +621,21 @@ function buildAgendaSlotsFromPlano(patient) {
       ? plano[String(slotIndex)]
       : {};
 
+    const profissionalRaw = normalizeAgendaTextValue(slot.profissional);
+    const profissionalResolved = typeof resolver === "function"
+      ? normalizeAgendaTextValue(resolver(profissionalRaw)) || profissionalRaw
+      : profissionalRaw;
+
     return {
       slotIndex,
       terapia: normalizeAgendaTextValue(slot.terapia),
       diaSemana: normalizeDiaSemana(normalizeAgendaTextValue(slot.diaSemana)),
-      profissional: normalizeAgendaTextValue(slot.profissional)
+      profissional: profissionalResolved
     };
   });
 }
 
-function buildAgendaSlotsFromDadosOriginais(dadosOriginais) {
+function buildAgendaSlotsFromDadosOriginais(dadosOriginais, resolver = null) {
   const normalizedMap = {};
   Object.keys(dadosOriginais || {}).forEach((key) => {
     const normalizedKey = normalizeHeaderKey(key);
@@ -529,22 +652,27 @@ function buildAgendaSlotsFromDadosOriginais(dadosOriginais) {
     const diaRaw = normalizeAgendaTextValue(normalizedMap[`data${suffix}`] || normalizedMap[`dia${suffix}`]);
     const profissional = normalizeAgendaTextValue(normalizedMap[`profissional${suffix}`]);
 
+    const profissionalRaw = normalizeAgendaTextValue(normalizedMap[`profissional${suffix}`]);
+    const profissionalResolved = typeof resolver === "function"
+      ? normalizeAgendaTextValue(resolver(profissionalRaw)) || profissionalRaw
+      : profissionalRaw;
+
     return {
       slotIndex,
       terapia,
       diaSemana: normalizeDiaSemana(diaRaw),
-      profissional
+      profissional: profissionalResolved
     };
   });
 }
 
-function getAgendaSlotsForDisplay(patient, dadosOriginais) {
-  const fromPlano = buildAgendaSlotsFromPlano(patient);
+function getAgendaSlotsForDisplay(patient, dadosOriginais, resolver = null) {
+  const fromPlano = buildAgendaSlotsFromPlano(patient, resolver);
   const hasPlanoData = fromPlano.some((slot) => slot.terapia || slot.diaSemana || slot.profissional);
   if (hasPlanoData) {
     return fromPlano;
   }
-  return buildAgendaSlotsFromDadosOriginais(dadosOriginais);
+  return buildAgendaSlotsFromDadosOriginais(dadosOriginais, resolver);
 }
 
 function setFeedback(element, message, type = "info") {
@@ -580,16 +708,45 @@ function sortByNome(entries) {
   });
 }
 
-function openModal(overlay) {
+const modalFocusOrigin = new WeakMap();
+
+function openModal(overlay, triggerEl = null) {
+  if (!overlay) {
+    return;
+  }
+
+  const origin = triggerEl instanceof HTMLElement ? triggerEl : document.activeElement;
+  if (origin instanceof HTMLElement) {
+    modalFocusOrigin.set(overlay, origin);
+  }
+
   overlay.classList.add("open");
   overlay.setAttribute("aria-hidden", "false");
+  overlay.removeAttribute("inert");
   document.body.style.overflow = "hidden";
 }
 
 function closeModal(overlay) {
+  if (!overlay) {
+    return;
+  }
+
+  const activeElement = document.activeElement;
+  if (activeElement instanceof HTMLElement && overlay.contains(activeElement)) {
+    activeElement.blur();
+  }
+
   overlay.classList.remove("open");
   overlay.setAttribute("aria-hidden", "true");
+  overlay.setAttribute("inert", "");
   document.body.style.overflow = "";
+
+  const origin = modalFocusOrigin.get(overlay);
+  if (origin instanceof HTMLElement && origin.isConnected) {
+    window.setTimeout(() => {
+      origin.focus();
+    }, 0);
+  }
 }
 
 function parseCsvToRows(csvText) {
@@ -639,11 +796,16 @@ function readCsvFile(file) {
 }
 
 export function render(container) {
-  const userRole = window.__userProfile?.role || "";
+  const userRole = String(window.__userProfile?.role || "").trim().toLowerCase();
+  const isAdmin = userRole === "admin";
   const readOnly = userRole === "profissional";
 
   let patientsMap = {};
   let editingPatientId = "";
+  let professionalReferenceIndex = {
+    aliasMap: new Map(),
+    compactMap: new Map()
+  };
 
   container.innerHTML = `
     <section class="admin-page">
@@ -682,7 +844,7 @@ export function render(container) {
       </article>
     </section>
 
-    <div id="pac-edit-modal" class="admin-modal-overlay" aria-hidden="true">
+    <div id="pac-edit-modal" class="admin-modal-overlay" aria-hidden="true" inert>
       <div class="admin-modal patient-edit-modal" role="dialog" aria-modal="true" aria-labelledby="pac-edit-title">
         <button id="pac-edit-close" type="button" class="admin-modal-close" aria-label="Fechar">×</button>
         <h2 id="pac-edit-title">Novo paciente</h2>
@@ -825,7 +987,7 @@ export function render(container) {
       </div>
     </div>
 
-    <div id="pac-ficha-modal" class="admin-modal-overlay" aria-hidden="true">
+    <div id="pac-ficha-modal" class="admin-modal-overlay" aria-hidden="true" inert>
       <div class="admin-modal ficha-modal" role="dialog" aria-modal="true" aria-labelledby="pac-ficha-title">
         <button id="pac-ficha-close" type="button" class="admin-modal-close" aria-label="Fechar">×</button>
         <h2 id="pac-ficha-title">Ficha do paciente</h2>
@@ -878,6 +1040,131 @@ export function render(container) {
   const fichaClose = container.querySelector("#pac-ficha-close");
   const fichaTitle = container.querySelector("#pac-ficha-title");
   const fichaBody = container.querySelector("#pac-ficha-body");
+
+  function resolveProfessionalName(value) {
+    return resolveProfessionalByReference(value, professionalReferenceIndex);
+  }
+
+  async function loadProfessionalReferences() {
+    const result = await listProfessionals();
+    if (!result.ok) {
+      professionalReferenceIndex = {
+        aliasMap: new Map(),
+        compactMap: new Map()
+      };
+      return result;
+    }
+
+    professionalReferenceIndex = buildProfessionalReferenceIndex(result.professionals || {});
+    return result;
+  }
+
+  function buildNormalizedAgendaPatch(patient) {
+    const current = patient && typeof patient === "object" ? patient : {};
+    const dadosOriginais = current?.dadosOriginais && typeof current.dadosOriginais === "object"
+      ? { ...current.dadosOriginais }
+      : {};
+    const legacy = current?.legacy && typeof current.legacy === "object"
+      ? { ...current.legacy }
+      : {};
+
+    let changedReferences = 0;
+
+    Object.keys(dadosOriginais).forEach((key) => {
+      const normalizedKey = normalizeHeaderKey(key);
+      if (!normalizedKey.startsWith("profissional")) {
+        return;
+      }
+
+      const original = normalizeName(dadosOriginais[key]);
+      if (!original) {
+        return;
+      }
+
+      const resolved = resolveProfessionalName(original);
+      if (resolved && resolved !== original) {
+        dadosOriginais[key] = resolved;
+        changedReferences += 1;
+      }
+    });
+
+    if (typeof legacy.profissionais === "string") {
+      const originalLegacy = normalizeName(legacy.profissionais);
+      const nextLegacy = remapDelimitedProfessionalNames(originalLegacy, resolveProfessionalName);
+      if (nextLegacy && nextLegacy !== originalLegacy) {
+        legacy.profissionais = nextLegacy;
+        changedReferences += 1;
+      }
+    }
+
+    if (!changedReferences) {
+      return null;
+    }
+
+    return {
+      dadosOriginais,
+      legacy,
+      changedReferences
+    };
+  }
+
+  async function syncPatientsAgendaReferences() {
+    if (readOnly) {
+      return {
+        updatedPatients: 0,
+        updatedReferences: 0,
+        failedUpdates: 0
+      };
+    }
+
+    const patientEntries = Object.entries(patientsMap);
+    if (!patientEntries.length) {
+      return {
+        updatedPatients: 0,
+        updatedReferences: 0,
+        failedUpdates: 0
+      };
+    }
+
+    let updatedPatients = 0;
+    let updatedReferences = 0;
+    let failedUpdates = 0;
+
+    for (let index = 0; index < patientEntries.length; index += 1) {
+      const [patientId, patient] = patientEntries[index];
+      const normalizedPatch = buildNormalizedAgendaPatch(patient);
+      if (!normalizedPatch) {
+        continue;
+      }
+
+      const result = await updatePatient(patientId, {
+        dadosOriginais: normalizedPatch.dadosOriginais,
+        legacy: normalizedPatch.legacy,
+        updatedAt: Date.now()
+      });
+
+      if (!result.ok) {
+        failedUpdates += 1;
+        continue;
+      }
+
+      patientsMap[patientId] = {
+        ...patientsMap[patientId],
+        dadosOriginais: normalizedPatch.dadosOriginais,
+        legacy: normalizedPatch.legacy,
+        updatedAt: Date.now()
+      };
+
+      updatedPatients += 1;
+      updatedReferences += normalizedPatch.changedReferences;
+    }
+
+    return {
+      updatedPatients,
+      updatedReferences,
+      failedUpdates
+    };
+  }
 
   function renderPatientsTable() {
     const filter = String(filtroInput.value || "").trim().toLowerCase();
@@ -1011,15 +1298,17 @@ export function render(container) {
       diaVencimentoInput.value = perfil.pagamento.diaVencimento || "";
     }
 
-    openModal(editOverlay);
+    openModal(editOverlay, document.activeElement);
     window.setTimeout(() => nomePacienteInput.focus(), 0);
   }
 
-  function openFichaModal(patientId) {
+  function openFichaModal(patientId, triggerEl = null) {
     const patient = patientsMap[patientId];
     if (!patient) {
       return;
     }
+
+    const isAdminView = isAdmin;
 
     const core = getPatientCore(patient);
     const perfil = buildPerfilFromPatient(patient);
@@ -1063,7 +1352,7 @@ export function render(container) {
       </section>
     `;
 
-    const originalRows = isAdmin
+    const originalRows = isAdminView
       ? Object.keys(dadosOriginais)
         .filter((key) => String(dadosOriginais[key] || "").trim() !== "")
         .map((key) => `
@@ -1073,7 +1362,7 @@ export function render(container) {
         .join("")
       : "";
 
-    const originalDataSection = isAdmin
+    const originalDataSection = isAdminView
       ? `
         <section class="ficha-section">
           <details class="ficha-collapsible">
@@ -1156,7 +1445,7 @@ export function render(container) {
       ].join("")
     );
 
-    const sourceSection = isAdmin
+    const sourceSection = isAdminView
       ? `
         <section class="ficha-section">
           <h3>Origem do cadastro</h3>
@@ -1167,7 +1456,7 @@ export function render(container) {
       `
       : "";
 
-    const agendaSlots = getAgendaSlotsForDisplay(patient, dadosOriginais);
+    const agendaSlots = getAgendaSlotsForDisplay(patient, dadosOriginais, resolveProfessionalName);
 
     const agendaRowBlocks = [];
     for (let i = 0; i < agendaSlots.length; i++) {
@@ -1234,7 +1523,7 @@ export function render(container) {
       ${originalDataSection}
     `;
 
-    openModal(fichaOverlay);
+    openModal(fichaOverlay, triggerEl || document.activeElement);
   }
 
   async function refreshPatients() {
@@ -1251,10 +1540,25 @@ export function render(container) {
     }
 
     patientsMap = result.patients || {};
+    await loadProfessionalReferences();
+    const syncResult = await syncPatientsAgendaReferences();
     const total = Object.keys(patientsMap).length;
 
     renderPatientsTable();
-    setFeedback(listaFeedback, `${total} paciente(s) carregado(s).`, "info");
+
+    const statusParts = [`${total} paciente(s) carregado(s).`];
+    if (syncResult.updatedPatients > 0) {
+      statusParts.push(`${syncResult.updatedPatients} paciente(s) com agenda padronizada (${syncResult.updatedReferences} referência(s)).`);
+    }
+    if (syncResult.failedUpdates > 0) {
+      statusParts.push(`${syncResult.failedUpdates} atualização(ões) não puderam ser aplicadas.`);
+    }
+
+    setFeedback(
+      listaFeedback,
+      statusParts.join(" "),
+      syncResult.failedUpdates > 0 ? "error" : "info"
+    );
   }
 
   async function savePatient() {
@@ -1400,7 +1704,7 @@ export function render(container) {
     }
 
     if (action === "ficha") {
-      openFichaModal(patientId);
+      openFichaModal(patientId, trigger);
       return;
     }
 
