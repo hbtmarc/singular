@@ -698,6 +698,8 @@ body:not(.auth-mode) #auth-root {
   padding: 10px 8px;
   border-bottom: 1px solid #f3f4f6;
   vertical-align: middle;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .admin-table th {
@@ -743,6 +745,8 @@ body:not(.auth-mode) #auth-root {
 .admin-modal {
   width: 100%;
   max-width: 640px;
+  max-height: calc(100vh - 40px);
+  overflow: auto;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);

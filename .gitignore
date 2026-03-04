@@ -1,0 +1,15 @@
+# Python/OS
+.venv/
+__pycache__/
+.DS_Store
+
+# Local editor
+.vscode/
+
+# Dados sensíveis de origem (pacientes/profissionais)
+dados_pacientes.csv
+dados_pacientes.xlsx
+dados_profissionais.csv
+dados_profissionais.xlsx
+Modelos/*.xlsx
+Modelos/*.csv

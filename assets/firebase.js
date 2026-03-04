@@ -1235,9 +1235,13 @@ export async function upsertEmailIndex(email, uid) {
       message: "Índice de e-mail atualizado com sucesso."
     };
   } catch (error) {
+    const details = formatFirebaseError(error, "Não foi possível atualizar o índice de e-mail.");
     return {
       ok: false,
-      message: "Não foi possível atualizar o índice de e-mail."
+      message: details.message,
+      code: details.code,
+      errorCode: details.code,
+      errorMessage: details.message
     };
   }
 }
@@ -1262,9 +1266,13 @@ export async function removeEmailIndex(email) {
       message: "Índice de e-mail removido com sucesso."
     };
   } catch (error) {
+    const details = formatFirebaseError(error, "Não foi possível remover o índice de e-mail.");
     return {
       ok: false,
-      message: "Não foi possível remover o índice de e-mail."
+      message: details.message,
+      code: details.code,
+      errorCode: details.code,
+      errorMessage: details.message
     };
   }
 }
@@ -1699,9 +1707,13 @@ export async function createPatient(patientId, payload) {
       message: "Paciente cadastrado com sucesso."
     };
   } catch (error) {
+    const details = formatFirebaseError(error, "Não foi possível cadastrar o paciente.");
     return {
       ok: false,
-      message: "Não foi possível cadastrar o paciente."
+      message: details.message,
+      code: details.code,
+      errorCode: details.code,
+      errorMessage: details.message
     };
   }
 }
@@ -1761,9 +1773,13 @@ export async function updatePatient(patientId, patch) {
       message: "Paciente atualizado com sucesso."
     };
   } catch (error) {
+    const details = formatFirebaseError(error, "Não foi possível atualizar o paciente.");
     return {
       ok: false,
-      message: "Não foi possível atualizar o paciente."
+      message: details.message,
+      code: details.code,
+      errorCode: details.code,
+      errorMessage: details.message
     };
   }
 }

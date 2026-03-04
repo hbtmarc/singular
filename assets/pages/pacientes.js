@@ -872,6 +872,8 @@ export function render(container) {
           <div class="admin-inline-actions">
             <input id="pac-filtro" class="admin-input admin-filter" type="text" placeholder="Filtrar por nome, telefone ou CPF" />
             ${readOnly ? "" : '<button id="pac-novo" type="button" class="admin-btn admin-btn-primary">Novo paciente</button>'}
+            ${readOnly ? "" : '<button id="pac-importar-csv" type="button" class="admin-btn admin-btn-secondary">Importar CSV</button>'}
+            ${readOnly ? "" : '<input id="pac-import-file" type="file" accept=".csv,text/csv" style="display:none;" />'}
           </div>
 
           <div class="admin-table-wrap">
@@ -895,6 +897,7 @@ export function render(container) {
           </div>
 
           <p id="pac-lista-feedback" class="admin-feedback"></p>
+          <div id="pac-import-details" class="admin-feedback" style="margin-top:4px;"></div>
         </div>
       </article>
     </section>
@@ -1054,8 +1057,11 @@ export function render(container) {
 
   const filtroInput = container.querySelector("#pac-filtro");
   const novoButton = container.querySelector("#pac-novo");
+  const importarCsvButton = container.querySelector("#pac-importar-csv");
+  const importFileInput = container.querySelector("#pac-import-file");
   const listaBody = container.querySelector("#pac-lista-body");
   const listaFeedback = container.querySelector("#pac-lista-feedback");
+  const importDetails = container.querySelector("#pac-import-details");
 
   const editOverlay = container.querySelector("#pac-edit-modal");
   const editCloseButton = container.querySelector("#pac-edit-close");
@@ -1098,6 +1104,225 @@ export function render(container) {
 
   function resolveProfessionalName(value) {
     return resolveProfessionalByReference(value, professionalReferenceIndex);
+  }
+
+  function hasCsvRowContent(row) {
+    if (!row || typeof row !== "object") {
+      return false;
+    }
+
+    const raw = row.rawRow && typeof row.rawRow === "object" ? row.rawRow : {};
+    return Object.values(raw).some((value) => String(value || "").trim() !== "");
+  }
+
+  function buildDeterministicPatientId(core, row) {
+    const cpfDigits = onlyDigits(core?.cpf || "");
+    if (cpfDigits.length >= 11) {
+      return `cpf_${cpfDigits}`;
+    }
+
+    const rowIndex = Number.isFinite(Number(row?.rowIndex)) ? Number(row.rowIndex) : 0;
+    const basis = [
+      normalizeHeaderKey(core?.nome || ""),
+      String(core?.dataNascimento || "semdata"),
+      String(core?.telefoneDigits || "semfone"),
+      String(rowIndex || 0)
+    ].join("_");
+
+    const compact = normalizeHeaderKey(basis).slice(0, 72);
+    return `csv_${compact || `linha_${rowIndex || Date.now()}`}`;
+  }
+
+  function buildCsvImportPayload(row, importId, importedAt) {
+    const rawRow = row?.rawRow && typeof row.rawRow === "object" ? row.rawRow : {};
+    const normalizedRow = row?.normalizedRow && typeof row.normalizedRow === "object" ? row.normalizedRow : {};
+    const rowIndex = Number.isFinite(Number(row?.rowIndex)) ? Number(row.rowIndex) : 0;
+
+    const coreRaw = buildCoreFromCsvRow(rawRow, normalizedRow);
+    const normalizedName = normalizeName(coreRaw.nome);
+    const coreNome = normalizedName || `Sem nome (linha ${rowIndex || "?"})`;
+    const core = {
+      ...coreRaw,
+      nome: coreNome,
+      cpf: onlyDigits(coreRaw.cpf),
+      telefoneDigits: onlyDigits(coreRaw.telefoneDigits || coreRaw.telefone),
+      ativo: true
+    };
+
+    const endereco = buildEnderecoFromCsvRow(rawRow, normalizedRow);
+    const legacy = buildLegacyFromCsvRow(rawRow, normalizedRow);
+
+    const alertas = [];
+    if (!normalizedName) {
+      alertas.push(`Sem nome (linha ${rowIndex || "?"})`);
+    }
+
+    const responsavelFinanceiro = String(
+      rawRow["Resp.Fin"]
+      || rawRow["Resp. Fin"]
+      || normalizedRow.respfin
+      || ""
+    ).trim();
+
+    return {
+      core,
+      nome: core.nome,
+      cpf: core.cpf,
+      telefone: core.telefone,
+      telefoneDigits: core.telefoneDigits,
+      dataNascimento: core.dataNascimento,
+      email: core.email,
+      ativo: true,
+      endereco: {
+        cep: onlyDigits(endereco.cep || ""),
+        logradouro: String(endereco.logradouro || "").trim(),
+        bairro: String(endereco.bairro || "").trim(),
+        cidade: String(endereco.cidade || "").trim()
+      },
+      legacy,
+      dadosOriginais: rawRow,
+      alertas,
+      source: {
+        importId,
+        rowIndex,
+        importedAt
+      },
+      responsavelFinanceiro,
+      updatedAt: Date.now()
+    };
+  }
+
+  function mergeImportedPatient(currentPatient, importedPayload, importedAt) {
+    const current = currentPatient && typeof currentPatient === "object" ? currentPatient : {};
+    const currentCore = current.core && typeof current.core === "object" ? current.core : {};
+    const nextCore = importedPayload.core && typeof importedPayload.core === "object" ? importedPayload.core : {};
+
+    return {
+      ...current,
+      ...importedPayload,
+      core: {
+        ...currentCore,
+        ...nextCore,
+        nome: normalizeName(nextCore.nome || currentCore.nome || importedPayload.nome || current.nome || "") || importedPayload.nome,
+        cpf: onlyDigits(nextCore.cpf || currentCore.cpf || importedPayload.cpf || current.cpf || ""),
+        telefoneDigits: onlyDigits(nextCore.telefoneDigits || nextCore.telefone || currentCore.telefoneDigits || currentCore.telefone || ""),
+        ativo: currentCore.ativo !== false
+      },
+      nome: normalizeName(importedPayload.nome || current.nome || "") || importedPayload.nome,
+      cpf: onlyDigits(importedPayload.cpf || current.cpf || ""),
+      telefoneDigits: onlyDigits(importedPayload.telefoneDigits || importedPayload.telefone || current.telefoneDigits || ""),
+      dataNascimento: importedPayload.dataNascimento || current.dataNascimento || null,
+      email: String(importedPayload.email || current.email || "").trim().toLowerCase(),
+      ativo: current.ativo !== false,
+      endereco: {
+        ...(current.endereco || {}),
+        ...(importedPayload.endereco || {})
+      },
+      legacy: {
+        ...(current.legacy || {}),
+        ...(importedPayload.legacy || {})
+      },
+      dadosOriginais: importedPayload.dadosOriginais || {},
+      alertas: Array.from(new Set([...(Array.isArray(current.alertas) ? current.alertas : []), ...(Array.isArray(importedPayload.alertas) ? importedPayload.alertas : [])])),
+      source: importedPayload.source || (current.source && typeof current.source === "object" ? current.source : {}),
+      responsavelFinanceiro: String(importedPayload.responsavelFinanceiro || current.responsavelFinanceiro || "").trim(),
+      createdAt: Number.isFinite(Number(current.createdAt)) ? Number(current.createdAt) : importedAt,
+      updatedAt: Date.now()
+    };
+  }
+
+  async function importPatientsFromCsv(file) {
+    if (!(file instanceof File)) {
+      setFeedback(listaFeedback, "Selecione um arquivo CSV válido.", "error");
+      return;
+    }
+
+    const importId = `csv_${Date.now()}`;
+    const importedAt = Date.now();
+    const summary = {
+      totalRows: 0,
+      processedRows: 0,
+      importedRows: 0,
+      updatedRows: 0,
+      skippedRows: 0,
+      failedRows: 0,
+      failures: []
+    };
+
+    setFeedback(listaFeedback, "Lendo arquivo CSV e importando pacientes...", "info");
+    importDetails.innerHTML = "";
+
+    let rows = [];
+    try {
+      const csvText = await readCsvFile(file);
+      rows = parseCsvToRows(csvText).filter(hasCsvRowContent);
+    } catch (error) {
+      setFeedback(listaFeedback, "Falha ao ler o arquivo CSV.", "error");
+      setErrorDetails(importDetails, String(error?.code || ""), String(error?.message || ""));
+      return;
+    }
+
+    summary.totalRows = rows.length;
+    if (!summary.totalRows) {
+      setFeedback(listaFeedback, "Nenhuma linha com dados foi encontrada no CSV.", "error");
+      return;
+    }
+
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index];
+      const importedPayload = buildCsvImportPayload(row, importId, importedAt);
+      const patientId = buildDeterministicPatientId(importedPayload.core, row);
+
+      if (!patientId) {
+        summary.skippedRows += 1;
+        continue;
+      }
+
+      const current = patientsMap[patientId] || null;
+      const payload = mergeImportedPatient(current, importedPayload, importedAt);
+      summary.processedRows += 1;
+
+      let result;
+      if (current) {
+        result = await updatePatient(patientId, payload);
+      } else {
+        result = await createPatient(patientId, payload);
+      }
+
+      if (!result?.ok) {
+        summary.failedRows += 1;
+        summary.failures.push({
+          rowIndex: row.rowIndex,
+          patientId,
+          code: String(result?.code || result?.errorCode || ""),
+          message: String(result?.errorMessage || result?.message || "Não foi possível importar a linha.")
+        });
+        continue;
+      }
+
+      patientsMap[patientId] = {
+        ...payload,
+        id: patientId
+      };
+
+      if (current) {
+        summary.updatedRows += 1;
+      } else {
+        summary.importedRows += 1;
+      }
+    }
+
+    renderPatientsTable();
+
+    const finalMessage = `Importação concluída: ${summary.totalRows} linha(s), ${summary.importedRows} nova(s), ${summary.updatedRows} atualizada(s), ${summary.failedRows} falha(s), ${summary.skippedRows} ignorada(s).`;
+    setFeedback(listaFeedback, finalMessage, summary.failedRows > 0 ? "error" : "success");
+
+    if (summary.failures.length) {
+      const first = summary.failures[0];
+      setErrorDetails(importDetails, first.code || "import/csv-row-failure", `Linha ${first.rowIndex || "?"} (${first.patientId}): ${first.message}`);
+    } else {
+      importDetails.innerHTML = "";
+    }
   }
 
   function resolveProfessionalLink(value) {
@@ -1761,6 +1986,22 @@ export function render(container) {
 
   if (novoButton) {
     novoButton.addEventListener("click", () => openEditModal());
+  }
+
+  if (importarCsvButton && importFileInput) {
+    importarCsvButton.addEventListener("click", () => {
+      importFileInput.click();
+    });
+
+    importFileInput.addEventListener("change", async () => {
+      const file = importFileInput.files && importFileInput.files[0] ? importFileInput.files[0] : null;
+      if (!file) {
+        return;
+      }
+
+      await importPatientsFromCsv(file);
+      importFileInput.value = "";
+    });
   }
 
   editCloseButton.addEventListener("click", () => closeModal(editOverlay));

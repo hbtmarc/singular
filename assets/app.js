@@ -1,8 +1,19 @@
 import { initFirebase, onUserChanged, logout, readUserProfile, watchUserProfile, logRouteNavigation } from "./firebase.js";
 
-const APP_BUNDLE_VERSION = "20260304-18";
+const APP_BUNDLE_VERSION = "20260304-19";
 const appBundleVersionFromUrl = new URL(import.meta.url).searchParams.get("v");
 const ASSET_VERSION = String(appBundleVersionFromUrl || APP_BUNDLE_VERSION).trim() || APP_BUNDLE_VERSION;
+
+if (typeof window.__DEBUG !== "boolean") {
+  window.__DEBUG = false;
+}
+
+function debugLog(...args) {
+  if (!window.__DEBUG) {
+    return;
+  }
+  console.log("[Singular DEBUG]", ...args);
+}
 
 function withAssetVersion(modulePath) {
   const basePath = String(modulePath || "").trim();
@@ -118,7 +129,7 @@ function getAllowedRoutes() {
   }
 
   if (role === "gerente") {
-    return new Set(["#/dashboard", "#/pacientes", "#/profissionais", "#/atendimentos", "#/financeiro", "#/configuracoes"]);
+    return new Set(["#/dashboard", "#/pacientes", "#/profissionais", "#/atendimentos", "#/configuracoes"]);
   }
 
   if (role === "administrativo") {
@@ -297,7 +308,15 @@ async function renderRoute() {
     return;
   }
 
-  if (currentUser && hash === loginHash && profileResolved) {
+  if (currentUser && hash === loginHash) {
+    if (!profileResolved) {
+      setAuthMode(true);
+      if (authRoot) {
+        authRoot.innerHTML = '<div class="status-card-center"><article class="card status-card"><h2>Carregando acesso</h2><div class="spinner"></div></article></div>';
+      }
+      return;
+    }
+
     window.location.hash = defaultHash;
     return;
   }
@@ -337,8 +356,8 @@ async function renderRoute() {
 
     if (hash === "#/administracao" && !(role === "admin" && hasActiveProfile())) {
       setTransientMessage("Acesso restrito ao Administrador.");
-    } else if (hash === "#/financeiro" && role !== "gerente" && role !== "admin") {
-      setTransientMessage("Acesso restrito ao perfil Gerente.");
+    } else if (hash === "#/financeiro" && role !== "admin") {
+      setTransientMessage("Acesso restrito ao Administrador.");
     } else if (!hasActiveProfile()) {
       setTransientMessage("Perfil não configurado/ativo. Procure o gestor.");
     } else {
@@ -367,6 +386,8 @@ async function renderRoute() {
   try {
     const pageModule = await import(withAssetVersion(route.modulePath));
     pageModule.render(contentElement);
+
+    debugLog("Rota renderizada", { hash, role: window.__userProfile?.role || "", ativo: hasActiveProfile() });
 
     logRouteNavigation({
       route: hash,

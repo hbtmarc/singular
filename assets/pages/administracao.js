@@ -244,7 +244,7 @@ export function render(container) {
       </article>
     </section>
 
-    <div id="adm-edit-modal" class="admin-modal-overlay" aria-hidden="true">
+    <div id="adm-edit-modal" class="admin-modal-overlay" aria-hidden="true" inert>
       <div class="admin-modal" role="dialog" aria-modal="true" aria-labelledby="adm-modal-title">
         <button id="adm-modal-close" type="button" class="admin-modal-close" aria-label="Fechar">×</button>
         <h2 id="adm-modal-title">Editar usuário</h2>
@@ -276,7 +276,7 @@ export function render(container) {
       </div>
     </div>
 
-    <div id="adm-backup-restore-modal" class="admin-modal-overlay" aria-hidden="true">
+    <div id="adm-backup-restore-modal" class="admin-modal-overlay" aria-hidden="true" inert>
       <div class="admin-modal" role="dialog" aria-modal="true" aria-labelledby="adm-backup-restore-title">
         <button id="adm-backup-restore-close" type="button" class="admin-modal-close" aria-label="Fechar">×</button>
         <h2 id="adm-backup-restore-title">Confirmar restauração</h2>
@@ -348,6 +348,7 @@ export function render(container) {
   const restoreDesc = container.querySelector("#adm-backup-restore-desc");
   const restorePathsList = container.querySelector("#adm-backup-restore-paths");
   const restoreFeedback = container.querySelector("#adm-backup-restore-feedback");
+  const modalFocusOrigin = new WeakMap();
 
   function setFeedback(element, message, type = "info") {
     const colors = {
@@ -360,19 +361,54 @@ export function render(container) {
     element.textContent = message;
   }
 
-  function openEditModal() {
-    modalOverlay.classList.add("open");
-    modalOverlay.setAttribute("aria-hidden", "false");
+  function openOverlay(overlay, triggerEl = null) {
+    if (!overlay) {
+      return;
+    }
+
+    const origin = triggerEl instanceof HTMLElement ? triggerEl : document.activeElement;
+    if (origin instanceof HTMLElement) {
+      modalFocusOrigin.set(overlay, origin);
+    }
+
+    overlay.classList.add("open");
+    overlay.setAttribute("aria-hidden", "false");
+    overlay.removeAttribute("inert");
     document.body.style.overflow = "hidden";
+  }
+
+  function closeOverlay(overlay) {
+    if (!overlay) {
+      return;
+    }
+
+    const activeElement = document.activeElement;
+    if (activeElement instanceof HTMLElement && overlay.contains(activeElement)) {
+      activeElement.blur();
+    }
+
+    overlay.classList.remove("open");
+    overlay.setAttribute("aria-hidden", "true");
+    overlay.setAttribute("inert", "");
+    document.body.style.overflow = "";
+
+    const origin = modalFocusOrigin.get(overlay);
+    if (origin instanceof HTMLElement && origin.isConnected) {
+      window.setTimeout(() => {
+        origin.focus();
+      }, 0);
+    }
+  }
+
+  function openEditModal() {
+    openOverlay(modalOverlay, document.activeElement);
     window.setTimeout(() => {
       editarRoleSelect.focus();
     }, 0);
   }
 
   function closeEditModal() {
-    modalOverlay.classList.remove("open");
-    modalOverlay.setAttribute("aria-hidden", "true");
-    document.body.style.overflow = "";
+    closeOverlay(modalOverlay);
     editarFeedback.textContent = "";
   }
 
@@ -388,15 +424,11 @@ export function render(container) {
     restorePathsList.innerHTML = restorePaths.map((path) => `<li>${path}</li>`).join("");
     restoreFeedback.textContent = "";
 
-    restoreModal.classList.add("open");
-    restoreModal.setAttribute("aria-hidden", "false");
-    document.body.style.overflow = "hidden";
+    openOverlay(restoreModal, document.activeElement);
   }
 
   function closeRestoreModal() {
-    restoreModal.classList.remove("open");
-    restoreModal.setAttribute("aria-hidden", "true");
-    document.body.style.overflow = "";
+    closeOverlay(restoreModal);
     restoreTargetBackupId = "";
     restoreFeedback.textContent = "";
   }
