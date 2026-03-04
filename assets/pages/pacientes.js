@@ -52,6 +52,15 @@ function normalizeName(value) {
   return String(value || "").trim().replace(/\s+/g, " ");
 }
 
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function parseCsvLine(line, delimiter = ";") {
   const values = [];
   let current = "";
@@ -512,6 +521,9 @@ function normalizeCompactValue(value) {
 function buildProfessionalReferenceIndex(professionalsMap = {}) {
   const aliasCandidates = new Map();
   const compactCandidates = new Map();
+  const aliasIdCandidates = new Map();
+  const compactIdCandidates = new Map();
+  const nameIdCandidates = new Map();
 
   const addCandidate = (map, key, canonical) => {
     const normalizedKey = String(key || "").trim();
@@ -528,6 +540,7 @@ function buildProfessionalReferenceIndex(professionalsMap = {}) {
   };
 
   Object.values(professionalsMap || {}).forEach((professional) => {
+    const professionalId = String(professional?.id || "").trim();
     const nomeCompleto = String(professional?.nomeCompleto || "").trim();
     const nomeAbreviado = String(professional?.nomeAbreviado || "").trim();
     const canonical = normalizeName(nomeAbreviado || nomeCompleto);
@@ -557,7 +570,16 @@ function buildProfessionalReferenceIndex(professionalsMap = {}) {
       const compactAlias = normalizeCompactValue(alias);
       addCandidate(aliasCandidates, lookupAlias, canonical);
       addCandidate(compactCandidates, compactAlias, canonical);
+
+      if (professionalId) {
+        addCandidate(aliasIdCandidates, lookupAlias, professionalId);
+        addCandidate(compactIdCandidates, compactAlias, professionalId);
+      }
     });
+
+    if (professionalId) {
+      addCandidate(nameIdCandidates, normalizeLookupValue(canonical), professionalId);
+    }
   });
 
   const collapseUnique = (candidateMap) => {
@@ -572,30 +594,58 @@ function buildProfessionalReferenceIndex(professionalsMap = {}) {
 
   return {
     aliasMap: collapseUnique(aliasCandidates),
-    compactMap: collapseUnique(compactCandidates)
+    compactMap: collapseUnique(compactCandidates),
+    aliasIdMap: collapseUnique(aliasIdCandidates),
+    compactIdMap: collapseUnique(compactIdCandidates),
+    nameToIdMap: collapseUnique(nameIdCandidates)
   };
 }
 
-function resolveProfessionalByReference(rawValue, referenceIndex) {
+function resolveProfessionalReference(rawValue, referenceIndex) {
   const original = normalizeName(rawValue);
   if (!original) {
-    return "";
+    return {
+      name: "",
+      id: ""
+    };
   }
 
   const lookup = normalizeLookupValue(original);
   const compact = normalizeCompactValue(original);
   const aliasMap = referenceIndex?.aliasMap;
   const compactMap = referenceIndex?.compactMap;
+  const aliasIdMap = referenceIndex?.aliasIdMap;
+  const compactIdMap = referenceIndex?.compactIdMap;
+  const nameToIdMap = referenceIndex?.nameToIdMap;
 
-  if (aliasMap instanceof Map && aliasMap.has(lookup)) {
-    return aliasMap.get(lookup);
-  }
+  const nameFromAlias = aliasMap instanceof Map && aliasMap.has(lookup)
+    ? String(aliasMap.get(lookup) || "")
+    : "";
+  const nameFromCompact = compactMap instanceof Map && compactMap.has(compact)
+    ? String(compactMap.get(compact) || "")
+    : "";
 
-  if (compactMap instanceof Map && compactMap.has(compact)) {
-    return compactMap.get(compact);
-  }
+  const resolvedName = normalizeName(nameFromAlias || nameFromCompact || original);
 
-  return original;
+  const idFromAlias = aliasIdMap instanceof Map && aliasIdMap.has(lookup)
+    ? String(aliasIdMap.get(lookup) || "")
+    : "";
+  const idFromCompact = compactIdMap instanceof Map && compactIdMap.has(compact)
+    ? String(compactIdMap.get(compact) || "")
+    : "";
+  const idFromName = nameToIdMap instanceof Map && nameToIdMap.has(normalizeLookupValue(resolvedName))
+    ? String(nameToIdMap.get(normalizeLookupValue(resolvedName)) || "")
+    : "";
+
+  return {
+    name: resolvedName,
+    id: normalizeName(idFromAlias || idFromCompact || idFromName)
+  };
+}
+
+function resolveProfessionalByReference(rawValue, referenceIndex) {
+  const resolved = resolveProfessionalReference(rawValue, referenceIndex);
+  return resolved.name || "";
 }
 
 function remapDelimitedProfessionalNames(rawValue, resolver) {
@@ -802,9 +852,14 @@ export function render(container) {
 
   let patientsMap = {};
   let editingPatientId = "";
+  const PATIENT_FICHA_INTENT_KEY = "singular:open-patient-ficha";
+  const PROFESSIONAL_FICHA_INTENT_KEY = "singular:open-professional-ficha";
   let professionalReferenceIndex = {
     aliasMap: new Map(),
-    compactMap: new Map()
+    compactMap: new Map(),
+    aliasIdMap: new Map(),
+    compactIdMap: new Map(),
+    nameToIdMap: new Map()
   };
 
   container.innerHTML = `
@@ -1045,12 +1100,63 @@ export function render(container) {
     return resolveProfessionalByReference(value, professionalReferenceIndex);
   }
 
+  function resolveProfessionalLink(value) {
+    return resolveProfessionalReference(value, professionalReferenceIndex);
+  }
+
+  function navigateToProfessionalFicha(professionalId) {
+    const normalizedId = String(professionalId || "").trim();
+    if (!normalizedId) {
+      return;
+    }
+
+    try {
+      window.sessionStorage.setItem(PROFESSIONAL_FICHA_INTENT_KEY, JSON.stringify({
+        professionalId: normalizedId,
+        openedAt: Date.now()
+      }));
+    } catch (error) {
+      // noop
+    }
+
+    closeModal(fichaOverlay);
+    window.location.hash = "#/profissionais";
+  }
+
+  function consumePendingPatientFichaIntent() {
+    try {
+      const raw = window.sessionStorage.getItem(PATIENT_FICHA_INTENT_KEY);
+      if (!raw) {
+        return null;
+      }
+
+      window.sessionStorage.removeItem(PATIENT_FICHA_INTENT_KEY);
+      const payload = JSON.parse(raw);
+      const patientId = String(payload?.patientId || "").trim();
+      const openedAt = Number(payload?.openedAt || 0);
+      const isRecent = Number.isFinite(openedAt) && (Date.now() - openedAt) <= (5 * 60 * 1000);
+
+      if (!patientId || !isRecent) {
+        return null;
+      }
+
+      return {
+        patientId
+      };
+    } catch (error) {
+      return null;
+    }
+  }
+
   async function loadProfessionalReferences() {
     const result = await listProfessionals();
     if (!result.ok) {
       professionalReferenceIndex = {
         aliasMap: new Map(),
-        compactMap: new Map()
+        compactMap: new Map(),
+        aliasIdMap: new Map(),
+        compactIdMap: new Map(),
+        nameToIdMap: new Map()
       };
       return result;
     }
@@ -1478,8 +1584,12 @@ export function render(container) {
       const diaHtml = diaSemana
         ? formatDiaSemanaLabel(diaSemana)
         : '<span class="muted">Não informado</span>';
-      const profissionalHtml = profissional
-        ? profissional
+      const profissionalRef = resolveProfessionalLink(profissional);
+      const profissionalLabel = String(profissionalRef.name || profissional || "").trim();
+      const profissionalHtml = profissionalLabel
+        ? (profissionalRef.id
+          ? `<button type="button" class="patient-name-link" data-action="abrir-profissional" data-professional-id="${escapeHtml(profissionalRef.id)}">${escapeHtml(profissionalLabel)}</button>`
+          : escapeHtml(profissionalLabel))
         : '<span class="muted">Não informado</span>';
 
       agendaRowBlocks.push(`
@@ -1545,6 +1655,12 @@ export function render(container) {
     const total = Object.keys(patientsMap).length;
 
     renderPatientsTable();
+
+    const pendingIntent = consumePendingPatientFichaIntent();
+    if (pendingIntent?.patientId && patientsMap[pendingIntent.patientId]) {
+      const trigger = listaBody.querySelector(`button[data-action='ficha'][data-id='${pendingIntent.patientId}']`);
+      openFichaModal(pendingIntent.patientId, trigger || document.activeElement);
+    }
 
     const statusParts = [`${total} paciente(s) carregado(s).`];
     if (syncResult.updatedPatients > 0) {
@@ -1679,6 +1795,20 @@ export function render(container) {
   });
 
   fichaClose.addEventListener("click", () => closeModal(fichaOverlay));
+
+  fichaBody.addEventListener("click", (event) => {
+    const trigger = event.target.closest("button[data-action='abrir-profissional'][data-professional-id]");
+    if (!trigger) {
+      return;
+    }
+
+    const professionalId = String(trigger.getAttribute("data-professional-id") || "").trim();
+    if (!professionalId) {
+      return;
+    }
+
+    navigateToProfessionalFicha(professionalId);
+  });
 
   [editOverlay, fichaOverlay].forEach((overlay) => {
     overlay.addEventListener("click", (event) => {

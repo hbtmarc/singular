@@ -1,6 +1,6 @@
 import { initFirebase, onUserChanged, logout, readUserProfile, watchUserProfile, logRouteNavigation } from "./firebase.js";
 
-const APP_BUNDLE_VERSION = "20260304-15";
+const APP_BUNDLE_VERSION = "20260304-18";
 const appBundleVersionFromUrl = new URL(import.meta.url).searchParams.get("v");
 const ASSET_VERSION = String(appBundleVersionFromUrl || APP_BUNDLE_VERSION).trim() || APP_BUNDLE_VERSION;
 

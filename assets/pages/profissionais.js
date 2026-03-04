@@ -1,5 +1,6 @@
 import {
   listProfessionals,
+  listPatients,
   createProfessional,
   updateProfessional,
   setProfessionalActive
@@ -18,8 +19,214 @@ import {
   iconBtn
 } from "../icons.js";
 
+const PROFESSIONAL_FICHA_INTENT_KEY = "singular:open-professional-ficha";
+const PATIENT_FICHA_INTENT_KEY = "singular:open-patient-ficha";
+
 function normalizeName(value) {
   return String(value || "").trim().replace(/\s+/g, " ");
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function normalizeHeaderKey(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function normalizeLookupValue(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeCompactValue(value) {
+  return normalizeLookupValue(value).replace(/\s+/g, "");
+}
+
+function normalizeAgendaTextValue(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  const normalized = normalizeLookupValue(raw);
+  const emptyTokens = new Set(["nao informado", "n a", "na", "null", "undefined", "-"]);
+  if (emptyTokens.has(normalized)) {
+    return "";
+  }
+
+  return raw;
+}
+
+function formatDiaSemanaLabel(value) {
+  const normalized = normalizeLookupValue(value);
+  if (!normalized) {
+    return "";
+  }
+
+  if (normalized.startsWith("segunda")) return "Segunda-feira";
+  if (normalized.startsWith("terca")) return "Terça-feira";
+  if (normalized.startsWith("quarta")) return "Quarta-feira";
+  if (normalized.startsWith("quinta")) return "Quinta-feira";
+  if (normalized.startsWith("sexta")) return "Sexta-feira";
+  if (normalized.startsWith("sabado")) return "Sábado";
+  if (normalized.startsWith("domingo")) return "Domingo";
+  return value;
+}
+
+function splitLegacyValues(value) {
+  return String(value || "")
+    .split(";")
+    .map((item) => normalizeAgendaTextValue(item));
+}
+
+function getPatientName(patient) {
+  return normalizeName(
+    patient?.core?.nome
+      || patient?.nome
+      || patient?.perfil?.pessoais?.nomePaciente
+      || ""
+  ) || "Paciente sem nome";
+}
+
+function getPatientAgendaSlots(patient) {
+  const slots = [];
+  const plano = patient?.planoTerapias && typeof patient.planoTerapias === "object"
+    ? patient.planoTerapias
+    : {};
+
+  [1, 2, 3].forEach((slotIndex) => {
+    const slot = plano[String(slotIndex)] && typeof plano[String(slotIndex)] === "object"
+      ? plano[String(slotIndex)]
+      : {};
+
+    const terapia = normalizeAgendaTextValue(slot.terapia);
+    const dia = normalizeAgendaTextValue(slot.diaSemana);
+    const profissional = normalizeAgendaTextValue(slot.profissional);
+
+    if (terapia || dia || profissional) {
+      slots.push({
+        terapia,
+        dia,
+        profissional
+      });
+    }
+  });
+
+  if (slots.length) {
+    return slots;
+  }
+
+  const dadosOriginais = patient?.dadosOriginais && typeof patient.dadosOriginais === "object"
+    ? patient.dadosOriginais
+    : {};
+
+  const normalizedMap = {};
+  Object.keys(dadosOriginais).forEach((key) => {
+    const normalizedKey = normalizeHeaderKey(key);
+    if (!normalizedKey) {
+      return;
+    }
+    normalizedMap[normalizedKey] = String(dadosOriginais[key] || "").trim();
+  });
+
+  const roman = ["i", "ii", "iii"];
+  [1, 2, 3].forEach((slotIndex, index) => {
+    const suffix = roman[index];
+    const terapia = normalizeAgendaTextValue(normalizedMap[`terapia${suffix}`]);
+    const dia = normalizeAgendaTextValue(normalizedMap[`data${suffix}`] || normalizedMap[`dia${suffix}`]);
+    const profissional = normalizeAgendaTextValue(normalizedMap[`profissional${suffix}`]);
+
+    if (terapia || dia || profissional) {
+      slots.push({
+        terapia,
+        dia,
+        profissional
+      });
+    }
+  });
+
+  if (slots.length) {
+    return slots;
+  }
+
+  const legacy = patient?.legacy && typeof patient.legacy === "object" ? patient.legacy : {};
+  const terapias = splitLegacyValues(legacy.terapias);
+  const dias = splitLegacyValues(legacy.dias);
+  const profissionais = splitLegacyValues(legacy.profissionais);
+  const maxLength = Math.max(terapias.length, dias.length, profissionais.length);
+
+  for (let index = 0; index < maxLength; index += 1) {
+    const terapia = terapias[index] || "";
+    const dia = dias[index] || "";
+    const profissional = profissionais[index] || "";
+
+    if (terapia || dia || profissional) {
+      slots.push({
+        terapia,
+        dia,
+        profissional
+      });
+    }
+  }
+
+  return slots;
+}
+
+function buildProfessionalAliasSet(professional) {
+  const set = new Set();
+  const fullName = normalizeName(professional?.nomeCompleto || "");
+  const shortName = normalizeName(professional?.nomeAbreviado || "");
+
+  const parts = fullName.split(" ").filter(Boolean);
+  const firstName = parts[0] || "";
+  const secondName = parts[1] || "";
+  const lastName = parts[parts.length - 1] || "";
+
+  const aliases = [
+    fullName,
+    shortName,
+    firstName,
+    secondName ? `${firstName} ${secondName}` : "",
+    secondName ? `${firstName} ${secondName.charAt(0)}.` : "",
+    secondName ? `${firstName}${secondName.charAt(0)}` : "",
+    lastName ? `${firstName} ${lastName.charAt(0)}.` : "",
+    lastName ? `${firstName}${lastName.charAt(0)}` : ""
+  ].map((item) => normalizeName(item)).filter(Boolean);
+
+  aliases.forEach((alias) => {
+    set.add(`lookup:${normalizeLookupValue(alias)}`);
+    set.add(`compact:${normalizeCompactValue(alias)}`);
+  });
+
+  return set;
+}
+
+function professionalNameMatches(rawName, aliasSet) {
+  const normalized = normalizeAgendaTextValue(rawName);
+  if (!normalized) {
+    return false;
+  }
+
+  const lookupToken = `lookup:${normalizeLookupValue(normalized)}`;
+  const compactToken = `compact:${normalizeCompactValue(normalized)}`;
+  return aliasSet.has(lookupToken) || aliasSet.has(compactToken);
 }
 
 function buildNomeAbreviado(nomeCompleto) {
@@ -172,7 +379,33 @@ export function render(container) {
   const readOnly = role === "profissional";
 
   let professionalsMap = {};
+  let patientsMap = {};
   let editingProfessionalId = "";
+
+  function consumePendingProfessionalFichaIntent() {
+    try {
+      const raw = window.sessionStorage.getItem(PROFESSIONAL_FICHA_INTENT_KEY);
+      if (!raw) {
+        return null;
+      }
+
+      window.sessionStorage.removeItem(PROFESSIONAL_FICHA_INTENT_KEY);
+      const payload = JSON.parse(raw);
+      const professionalId = String(payload?.professionalId || "").trim();
+      const openedAt = Number(payload?.openedAt || 0);
+      const isRecent = Number.isFinite(openedAt) && (Date.now() - openedAt) <= (5 * 60 * 1000);
+
+      if (!professionalId || !isRecent) {
+        return null;
+      }
+
+      return {
+        professionalId
+      };
+    } catch (error) {
+      return null;
+    }
+  }
 
   container.innerHTML = `
     <section class="admin-page professionals-page">
@@ -511,6 +744,86 @@ export function render(container) {
 
   function renderFicha(professional) {
     const normalized = normalizeProfessional(professional);
+    const aliasSet = buildProfessionalAliasSet(normalized);
+
+    const agendaRows = [];
+    Object.entries(patientsMap || {}).forEach(([patientId, patient]) => {
+      const slots = getPatientAgendaSlots(patient);
+      if (!slots.length) {
+        return;
+      }
+
+      const dadosOriginais = patient?.dadosOriginais && typeof patient.dadosOriginais === "object"
+        ? patient.dadosOriginais
+        : {};
+
+      const normalizedMap = {};
+      Object.keys(dadosOriginais).forEach((key) => {
+        const normalizedKey = normalizeHeaderKey(key);
+        if (!normalizedKey) {
+          return;
+        }
+        normalizedMap[normalizedKey] = String(dadosOriginais[key] || "").trim();
+      });
+
+      const turno = normalizeAgendaTextValue(normalizedMap.turno || patient?.legacy?.turno || "");
+
+      slots.forEach((slot) => {
+        const profissionalSlot = normalizeAgendaTextValue(slot.profissional);
+        const diaSlot = normalizeAgendaTextValue(slot.dia);
+
+        if (!professionalNameMatches(profissionalSlot, aliasSet)) {
+          return;
+        }
+
+        if (!diaSlot) {
+          return;
+        }
+
+        agendaRows.push({
+          patientId,
+          patientName: getPatientName(patient),
+          terapia: normalizeAgendaTextValue(slot.terapia),
+          dia: formatDiaSemanaLabel(diaSlot),
+          turno
+        });
+      });
+    });
+
+    agendaRows.sort((a, b) => {
+      const byName = a.patientName.localeCompare(b.patientName, "pt-BR");
+      if (byName !== 0) {
+        return byName;
+      }
+      return String(a.dia || "").localeCompare(String(b.dia || ""), "pt-BR");
+    });
+
+    const pacientesAgendaSection = agendaRows.length
+      ? `
+        <section class="ficha-section ficha-section-card">
+          <h3>Pacientes na agenda</h3>
+          <div class="agenda-grid">
+            <div class="agenda-grid-cell agenda-grid-head">Paciente</div>
+            <div class="agenda-grid-cell agenda-grid-head">Dia</div>
+            <div class="agenda-grid-cell agenda-grid-head">Terapia</div>
+            ${agendaRows.map((row) => `
+              <div class="agenda-grid-cell">
+                <button type="button" class="patient-name-link" data-action="abrir-paciente" data-patient-id="${escapeHtml(row.patientId)}">${escapeHtml(row.patientName)}</button>
+                ${row.turno ? `<div class="muted" style="font-size:12px; margin-top:2px;">${escapeHtml(row.turno)}</div>` : ""}
+              </div>
+              <div class="agenda-grid-cell">${escapeHtml(row.dia || "Não informado")}</div>
+              <div class="agenda-grid-cell">${escapeHtml(row.terapia || "Não informado")}</div>
+            `).join("")}
+          </div>
+        </section>
+      `
+      : `
+        <section class="ficha-section ficha-section-card">
+          <h3>Pacientes na agenda</h3>
+          <p class="admin-empty">Nenhum paciente com agenda vinculada a este profissional.</p>
+        </section>
+      `;
+
     fichaTitle.textContent = normalized.nomeCompleto
       ? `Ficha do profissional — ${normalized.nomeCompleto}`
       : "Ficha do profissional";
@@ -560,6 +873,8 @@ export function render(container) {
           ${fichaField("Atualizado em", formatDateTime(normalized.updatedAt))}
         </div>
       </section>
+
+      ${pacientesAgendaSection}
     `;
   }
 
@@ -628,24 +943,39 @@ export function render(container) {
       </tr>
     `;
 
-    const result = await listProfessionals();
-    if (!result.ok) {
+    const [professionalsResult, patientsResult] = await Promise.all([
+      listProfessionals(),
+      listPatients()
+    ]);
+
+    if (!professionalsResult.ok) {
       listBody.innerHTML = `
         <tr>
           <td colspan="9" class="admin-empty admin-error">Falha ao carregar profissionais.</td>
         </tr>
       `;
-      setFeedback(listFeedback, result.message || "Não foi possível carregar profissionais.", "error");
+      setFeedback(listFeedback, professionalsResult.message || "Não foi possível carregar profissionais.", "error");
       return;
     }
 
     const normalizedMap = {};
-    Object.entries(result.professionals || {}).forEach(([id, item]) => {
+    Object.entries(professionalsResult.professionals || {}).forEach(([id, item]) => {
       normalizedMap[id] = normalizeProfessional(item, id);
     });
 
     professionalsMap = normalizedMap;
+    patientsMap = patientsResult.ok ? (patientsResult.patients || {}) : {};
+
     renderTable();
+
+    if (!patientsResult.ok) {
+      setFeedback(listFeedback, "Profissionais carregados, mas não foi possível carregar pacientes para o card da ficha.", "error");
+    }
+
+    const pendingIntent = consumePendingProfessionalFichaIntent();
+    if (pendingIntent?.professionalId && professionalsMap[pendingIntent.professionalId]) {
+      openFichaById(pendingIntent.professionalId, document.activeElement);
+    }
   }
 
   async function handleSave() {
@@ -716,6 +1046,25 @@ export function render(container) {
 
     renderFicha(professional);
     openFichaModal(triggerEl || document.activeElement);
+  }
+
+  function navigateToPatientFicha(patientId) {
+    const normalizedId = String(patientId || "").trim();
+    if (!normalizedId) {
+      return;
+    }
+
+    try {
+      window.sessionStorage.setItem(PATIENT_FICHA_INTENT_KEY, JSON.stringify({
+        patientId: normalizedId,
+        openedAt: Date.now()
+      }));
+    } catch (error) {
+      // noop
+    }
+
+    closeFichaModal();
+    window.location.hash = "#/pacientes";
   }
 
   filterInput.addEventListener("input", renderTable);
@@ -793,6 +1142,20 @@ export function render(container) {
   editCloseButton.addEventListener("click", closeEditModal);
   editCancelButton.addEventListener("click", closeEditModal);
   fichaCloseButton.addEventListener("click", closeFichaModal);
+
+  fichaBody.addEventListener("click", (event) => {
+    const actionButton = event.target.closest("button[data-action='abrir-paciente'][data-patient-id]");
+    if (!actionButton) {
+      return;
+    }
+
+    const patientId = String(actionButton.getAttribute("data-patient-id") || "").trim();
+    if (!patientId) {
+      return;
+    }
+
+    navigateToPatientFicha(patientId);
+  });
 
   editModalOverlay.addEventListener("click", (event) => {
     if (event.target === editModalOverlay) {
